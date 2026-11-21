@@ -4,6 +4,7 @@ import type { Lang } from "./i18n";
 import LanguageScreen from "./screens/LanguageScreen";
 import ModeScreen from "./screens/ModeScreen";
 import ElderDoseScreen from "./screens/ElderDoseScreen";
+import FamilyApp from "./screens/family/FamilyApp";
 
 type View = "language" | "mode" | "elder" | "family";
 
@@ -50,6 +51,5 @@ export default function App() {
 
   if (view === "elder") return <ElderDoseScreen lang={lang} />;
 
-  // family surface lands in the next pass
-  return null;
+  return <FamilyApp lang={lang} onLangChange={(l) => { setLang(l); void setSetting("lang", l); }} />;
 }
