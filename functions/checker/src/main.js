@@ -1,15 +1,23 @@
 // MedscopeOne — missed-dose escalation checker.
 // Runs on a 10-minute schedule (node-16 runtime): for every household,
-//   slot + 30 min, no taken log  -> log "missed" + WhatsApp the family (Meta test number)
+//   slot + 30 min, no taken log  -> log "missed" + WhatsApp every family contact
 //   slot + 60 min, still nothing -> Sarvam voice call speaking the alert in Bengali
+// Delivery is retried on later runs until it succeeds (or the attempt cap), so a
+// failed send or a skipped cycle does not quietly drop the alert.
 // Zero dependencies; uses node:https (node-16 has no global fetch).
 
 const https = require("https");
+const crypto = require("crypto");
 
 const ENDPOINT = process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.APPWRITE_ENDPOINT || "https://appwrite.kabirstudios.com/v1";
 const PROJECT = process.env.APPWRITE_FUNCTION_PROJECT_ID || "medscope";
 const API_KEY = process.env.APPWRITE_API_KEY;
 const DB = "medscope";
+
+// Each alert is attempted at most this many times, once per run. Six runs is
+// about an hour of retries: long enough to ride out a transient failure, short
+// enough that a permanently invalid number cannot buzz forever.
+const MAX_ATTEMPTS = Number(process.env.ESCALATION_MAX_ATTEMPTS || 6);
 
 const HEADERS = {
   "X-Appwrite-Project": PROJECT,
@@ -57,8 +65,22 @@ async function createRow(tableId, rowId, data) {
   return r.status === 201;
 }
 
+async function updateRow(tableId, rowId, data) {
+  const r = await request(`${ENDPOINT}/tablesdb/${DB}/tables/${tableId}/rows/${rowId}`, {
+    method: "PATCH",
+    headers: HEADERS,
+    body: JSON.stringify({ data }),
+  });
+  return r.status === 200;
+}
+
+// Doses are scheduled in the elder's local time. The function container runs in
+// UTC, so comparing UTC clock minutes against an IST "08:00" slot made every
+// reminder look 5½ hours late (or never due). Pin the household timezone.
+const TZ = process.env.CHECKER_TIMEZONE || "Asia/Kolkata";
+
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date());
 }
 
 function minutesOf(slot) {
@@ -67,8 +89,37 @@ function minutesOf(slot) {
 }
 
 function nowMinutes() {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
+  const h = Number(parts.find((p) => p.type === "hour").value) % 24;
+  const m = Number(parts.find((p) => p.type === "minute").value);
+  return h * 60 + m;
+}
+
+// Numbers are stored as full international digits by the app. Older rows may
+// still hold a bare 10-digit local number, so normalise defensively — but stop
+// inventing a country code: an unusable row is skipped and reported instead.
+function waNumber(raw) {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
+  if (d.length === 10) d = "91" + d; // legacy rows only
+  return /^\d{11,15}$/.test(d) ? d : "";
+}
+
+// Appwrite row IDs are capped at 36 characters, so a readable
+// `miss_<uuid>_<slot>_<date>` form is rejected with a 400. Hash to a fixed,
+// stable ID — the same dose/contact always maps to the same alert row, which is
+// what makes retrying safe.
+function rowId(prefix, parts) {
+  const digest = crypto.createHash("sha1").update(parts.join("|")).digest("hex").slice(0, 28);
+  return `${prefix}_${digest}`;
+}
+
+function messageStatus(text) {
+  try {
+    return JSON.parse(text).messages?.[0]?.message_status || null;
+  } catch {
+    return null;
+  }
 }
 
 async function sendWhatsApp(to, text, slotHint) {
@@ -76,10 +127,15 @@ async function sendWhatsApp(to, text, slotHint) {
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!token || !phoneId) return { skipped: "credentials not set" };
 
-  // Try a personalized plain text first — it works when the recipient has
-  // messaged us within 24h (open customer service window). If the window is
-  // closed, the API rejects it and we fall back to a template message
-  // (hello_world by default, or a custom one via WHATSAPP_TEMPLATE_NAME).
+  // An approved template goes first. Outside the 24-hour customer service
+  // window Meta does NOT reject free-form text — it accepts it, returns a
+  // wamid, and drops the message, so a "text first, template on error" order
+  // loses alerts silently. A template always delivers.
+  if (process.env.WHATSAPP_TEMPLATE_NAME) {
+    const tpl = await sendTemplate(to, text, slotHint, token, phoneId);
+    if (tpl.ok) return tpl;
+  }
+
   const textBody = JSON.stringify({
     messaging_product: "whatsapp",
     recipient_type: "individual",
@@ -93,10 +149,17 @@ async function sendWhatsApp(to, text, slotHint) {
     body: textBody,
   });
   if (textRes.status >= 200 && textRes.status < 300) {
-    return { ok: true, via: "text", status: textRes.status };
+    return { ok: true, via: "text", status: textRes.status, messageStatus: messageStatus(textRes.text) };
   }
 
-  const templateName = process.env.WHATSAPP_TEMPLATE_NAME || "hello_world";
+  // Last resort: the pre-approved hello_world template. It delivers, but it
+  // cannot carry the alert text — configure WHATSAPP_TEMPLATE_NAME for real
+  // alert content.
+  return sendTemplate(to, text, slotHint, token, phoneId, true);
+}
+
+async function sendTemplate(to, text, slotHint, token, phoneId, forceHelloWorld) {
+  const templateName = (forceHelloWorld ? "hello_world" : process.env.WHATSAPP_TEMPLATE_NAME) || "hello_world";
   const templateLang = process.env.WHATSAPP_TEMPLATE_LANG || "en_US";
   const message = {
     messaging_product: "whatsapp",
@@ -107,7 +170,7 @@ async function sendWhatsApp(to, text, slotHint) {
   };
   // Custom templates can carry body variables: {{1}} medicine, {{2}} date+time.
   // hello_world has none, so components are only sent for custom ones.
-  if (process.env.WHATSAPP_TEMPLATE_NAME) {
+  if (!forceHelloWorld && process.env.WHATSAPP_TEMPLATE_NAME) {
     message.template.components = [
       { type: "body", parameters: [{ type: "text", text: text }, { type: "text", text: slotHint }] },
     ];
@@ -118,7 +181,14 @@ async function sendWhatsApp(to, text, slotHint) {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(message),
   });
-  return { ok: r.status >= 200 && r.status < 300, via: "template", status: r.status, body: r.text.slice(0, 200) };
+  return {
+    ok: r.status >= 200 && r.status < 300,
+    via: "template",
+    status: r.status,
+    messageStatus: messageStatus(r.text),
+    template: templateName,
+    body: r.text.slice(0, 200),
+  };
 }
 
 async function sarvamCall(to, spokenText) {
@@ -132,42 +202,113 @@ async function sarvamCall(to, spokenText) {
   return { ok: r.status >= 200 && r.status < 300, status: r.status, body: r.text.slice(0, 200) };
 }
 
+// One delivery attempt for one contact and channel, keyed by a stable alert ID.
+// Already-sent alerts are left alone; failed or skipped ones are tried again on
+// this run, and the attempt count is carried in the alert row.
+async function deliver({ alertsById, summary, id, channel, number, text, hint, data, send, log, error }) {
+  const prev = alertsById.get(id);
+  if (prev && prev.status === "sent") return;
+  const attempts = Number(prev && prev.attempts) || 0;
+  if (attempts >= MAX_ATTEMPTS) {
+    summary.gaveUp++;
+    log(`gave up ${channel} ${number} after ${attempts} attempts (${id})`);
+    return;
+  }
+  if (prev) summary.retried++;
+
+  const result = await send();
+  if (result.ok) summary[channel === "whatsapp" ? "whatsapp" : "calls"]++;
+  else if (channel === "whatsapp") summary.whatsappFailed++;
+  if (!result.ok) error(`${channel} ${number} ${result.status || result.skipped}: ${result.body || ""}`);
+  if (result.messageStatus) log(`${channel} ${number}: message_status=${result.messageStatus} via ${result.via}${result.template ? " (" + result.template + ")" : ""}`);
+  if (result.via === "text") log(`warning: ${channel} ${number} sent as free-form text — outside the 24h window Meta drops these silently; set WHATSAPP_TEMPLATE_NAME`);
+
+  const row = {
+    ...data,
+    channel,
+    status: result.ok ? "sent" : result.skipped ? "skipped" : "failed",
+    at: Date.now(),
+    attempts: attempts + 1,
+  };
+  const saved = prev ? await updateRow("alerts", id, row) : await createRow("alerts", id, row);
+  if (!saved) error(`could not record ${channel} alert ${id}`);
+  alertsById.set(id, { $id: id, ...row });
+}
+
 module.exports = async ({ req, res, log, error }) => {
-  const summary = { checked: 0, missed: 0, whatsapp: 0, calls: 0 };
+  const summary = { households: 0, checked: 0, missed: 0, whatsapp: 0, whatsappFailed: 0, calls: 0, retried: 0, gaveUp: 0, noNumber: 0, paused: 0 };
   const date = today();
   const now = nowMinutes();
 
   try {
-    const devices = await listRows("devices", []);
-    const households = [...new Set(devices.map((d) => d.householdId).filter(Boolean))];
+    const [devices, allMedicines, allContacts, todayLogs] = await Promise.all([
+      listRows("devices", [{ method: "limit", values: [500] }]).catch(() => []),
+      listRows("medicines", [{ method: "limit", values: [500] }]),
+      listRows("contacts", [{ method: "limit", values: [500] }]),
+      listRows("taken_logs", [{ method: "equal", attribute: "date", values: [date] }, { method: "limit", values: [1000] }]).catch(() => []),
+    ]);
+
+    // A household is whoever is actually in the data. Requiring a `devices`
+    // row meant an elder who never re-ran setup — or a family phone that only
+    // joined by code — was silently never checked, so nobody was texted.
+    const households = [
+      ...new Set(
+        [...devices.map((d) => d.householdId), ...allMedicines.map((m) => m.householdId), ...allContacts.map((c) => c.householdId)]
+          .filter(Boolean)
+      ),
+    ];
+    summary.households = households.length;
     log("households: " + households.length);
 
+    // A paused elder is away (wedding, hospital) — no missed log, no message,
+    // no call. The app already hides reminders; escalation has to match it.
+    // Absent attribute means not paused, so older device rows still work.
+    const pausedElders = new Set(devices.filter((d) => Number(d.pauseUntil || 0) > Date.now()).map((d) => d.$id));
+    log("paused devices: " + pausedElders.size);
+
     for (const householdId of households) {
-      const [medicines, logs, contacts] = await Promise.all([
-        listRows("medicines", [{ method: "equal", attribute: "householdId", values: [householdId] }, { method: "limit", values: [100] }]),
-        listRows("taken_logs", [{ method: "equal", attribute: "householdId", values: [householdId] }, { method: "equal", attribute: "date", values: [date] }, { method: "limit", values: [100] }]),
-        listRows("contacts", [{ method: "equal", attribute: "householdId", values: [householdId] }, { method: "limit", values: [50] }]),
-      ]);
+      const medicines = allMedicines.filter((m) => m.householdId === householdId);
+      const logs = todayLogs.filter((l) => l.householdId === householdId);
+      // Every family contact, not just the first one: someone may be asleep,
+      // abroad, or simply not the person who can go check.
+      const numbers = [...new Set(allContacts.filter((c) => c.householdId === householdId).map((c) => waNumber(c.whatsapp)).filter(Boolean))];
       summary.checked += medicines.length;
 
+      const alerts = await listRows("alerts", [{ method: "equal", attribute: "householdId", values: [householdId] }, { method: "limit", values: [1000] }]).catch(() => []);
+      const alertsById = new Map(alerts.map((a) => [a.$id, a]));
+
+      if (!numbers.length) {
+        summary.noNumber++;
+        log(`household ${householdId}: no usable family number (${medicines.length} medicines unchecked for alerts)`);
+      }
+
       const takenKeys = new Set(logs.filter((l) => l.status === "taken").map((l) => l.medicineId + "|" + l.slot));
-      const familyNumber = contacts[0] && contacts[0].whatsapp;
 
       for (const med of medicines) {
-        const times = JSON.parse(med.times || "[]");
+        if (med.elderId && pausedElders.has(med.elderId)) {
+          summary.paused++;
+          continue;
+        }
+        let times = [];
+        try {
+          times = JSON.parse(med.times || "[]");
+        } catch {
+          error("bad times for " + med.$id);
+        }
         for (const slot of times) {
           const overdue = now - minutesOf(slot);
           if (overdue < 30) continue;
+          // A dose taken late stops the retries: the alert is no longer true.
           if (takenKeys.has(med.$id + "|" + slot)) continue;
 
-          const safeId = `miss_${med.$id}_${slot}_${date}`.replace(/[^a-zA-Z0-9._-]/g, "_");
-          const created = await createRow("taken_logs", safeId, {
+          const created = await createRow("taken_logs", rowId("miss", [med.$id, slot, date]), {
             elderId: med.elderId || "",
             medicineId: med.$id,
             nickname: med.nickname,
             slot: slot,
             date: date,
             status: "missed",
+            units: 0,
             at: Date.now(),
             deviceId: "checker",
             householdId: householdId,
@@ -177,33 +318,40 @@ module.exports = async ({ req, res, log, error }) => {
           });
           if (created) summary.missed++;
 
-          if (familyNumber) {
-            const waId = `wa_${med.$id}_${slot}_${date}`.replace(/[^a-zA-Z0-9._-]/g, "_");
-            const wa = await sendWhatsApp(familyNumber, `MedscopeOne: ${med.nickname} (${med.name}) - the ${slot} dose was not taken today. Please check on them.`, `${date} ${slot}`);
-            if (wa.ok) summary.whatsapp++;
-            await createRow("alerts", waId, {
-              elderId: med.elderId || "",
-              medicineId: med.$id,
+          const text = `MedscopeOne: ${med.nickname} (${med.name}) - the ${slot} dose was not taken today. Please check on them.`;
+          for (const number of numbers) {
+            await deliver({
+              alertsById,
+              summary,
+              id: rowId("wa", [med.$id, slot, date, number]),
               channel: "whatsapp",
-              status: wa.ok ? "sent" : wa.skipped ? "skipped" : "failed",
-              message: med.nickname + " " + slot + " missed",
-              at: Date.now(),
-              householdId: householdId,
-            }).catch(() => {});
+              number,
+              text,
+              hint: `${date} ${slot}`,
+              data: { elderId: med.elderId || "", medicineId: med.$id, message: `${med.nickname} ${slot} missed -> ${number}`, householdId },
+              send: () => sendWhatsApp(number, text, `${date} ${slot}`),
+              log,
+              error,
+            });
+          }
 
-            if (overdue >= 60) {
-              const callId = `call_${med.$id}_${slot}_${date}`.replace(/[^a-zA-Z0-9._-]/g, "_");
-              const call = await sarvamCall(familyNumber, `সাবধানবার্তা। ${med.nickname} খাওয়া হয়নি। অনুগ্রহ করে দেখুন।`);
-              if (call.ok) summary.calls++;
-              await createRow("alerts", callId, {
-                elderId: med.elderId || "",
-                medicineId: med.$id,
+          // No upper window: if a run was missed, the next run still calls.
+          if (overdue >= 60) {
+            for (const number of numbers) {
+              const spoken = `সাবধানবার্তা। ${med.nickname} খাওয়া হয়নি। অনুগ্রহ করে দেখুন।`;
+              await deliver({
+                alertsById,
+                summary,
+                id: rowId("call", [med.$id, slot, date, number]),
                 channel: "call",
-                status: call.ok ? "sent" : call.skipped ? "skipped" : "failed",
-                message: med.nickname + " " + slot + " missed, 60 min",
-                at: Date.now(),
-                householdId: householdId,
-              }).catch(() => {});
+                number,
+                text: spoken,
+                hint: `${date} ${slot}`,
+                data: { elderId: med.elderId || "", medicineId: med.$id, message: `${med.nickname} ${slot} missed, 60 min -> ${number}`, householdId },
+                send: () => sarvamCall(number, spoken),
+                log,
+                error,
+              });
             }
           }
         }
