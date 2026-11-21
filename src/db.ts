@@ -239,6 +239,31 @@ export async function isPaused(): Promise<boolean> {
   return true;
 }
 
+// ---- Backup restore (used by family Settings → Backup & restore) ----
+// Adopts another device's identity: deviceKey, household, medicines, contacts.
+// Local rows that don't exist in the backup are kept; backup rows win on id.
+
+export type BackupApply = {
+  deviceKey: string;
+  householdId: string | null;
+  medicines: Medicine[];
+  contacts: Contact[];
+};
+
+export async function applyBackup(b: BackupApply): Promise<{ householdId: string | null; medicines: number; contacts: number }> {
+  await setSetting("deviceKey", b.deviceKey);
+  await setSetting("householdId", b.householdId);
+  for (const m of b.medicines || []) {
+    await put("medicines", { ...m, synced: false });
+    queueSync(Collections.medicines, m.id, medicineToDoc({ ...m, synced: false }));
+  }
+  for (const c of b.contacts || []) {
+    await put("contacts", { ...c, synced: false });
+    queueSync(Collections.contacts, c.id, contactToDoc({ ...c, synced: false }));
+  }
+  return { householdId: b.householdId, medicines: (b.medicines || []).length, contacts: (b.contacts || []).length };
+}
+
 // ---- Household linking ----
 // One 6-digit code per household. The elder's phone creates it; family phones
 // join by entering it. Every synced doc carries householdId, which is what
