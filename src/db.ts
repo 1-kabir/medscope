@@ -52,7 +52,7 @@ export type Settings = {
 };
 
 const DB_NAME = "medscope";
-const DB_VERSION = 1;
+const DB_VERSION = 2; // v2: added "devices" store — bump when changing the store layout
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
