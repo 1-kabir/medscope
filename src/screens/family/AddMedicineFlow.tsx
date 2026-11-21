@@ -3,7 +3,7 @@ import Tesseract from "tesseract.js";
 import { saveMedicine, type Medicine } from "../../db";
 import { t, localizeNumber, type Lang } from "../../i18n";
 import { useSpeaker, SpeakerIcon } from "../../speech";
-import { aiConfigured, readMedicineImage, type MedicineReading } from "../../lib/prescription";
+import { readMedicineImage, type MedicineReading } from "../../lib/prescription";
 
 type Step = 0 | 1 | 2 | 3; // photo | reading | confirm | stock
 
@@ -108,7 +108,7 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) void (aiConfigured ? runAI(f) : runOCR(f));
+              if (f) void runAI(f);
             }}
           />
         </div>
