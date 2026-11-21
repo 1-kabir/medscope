@@ -1,14 +1,17 @@
-// Polls the latest ai-proxy deployment until built, then smoke-tests POST.
+// Polls the latest ai-proxy deployment until built, then smoke-tests POST
+// with a real image (a repo screenshot) through the same REST shape the
+// client SDK uses: { body: "<stringified function payload>" }.
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const key = fs.readFileSync(path.join(__dirname, "..", ".env"), "utf8").match(/APPWRITE_API_KEY=(.+)/)[1].trim();
+const root = path.join(__dirname, "..");
+const key = fs.readFileSync(path.join(root, ".env"), "utf8").match(/APPWRITE_API_KEY=(.+)/)[1].trim();
 const BASE = "https://appwrite.kabirstudios.com/v1";
 
 function api(method, urlPath, body) {
   const args = ["-s", "-X", method, `${BASE}${urlPath}`, "-H", "X-Appwrite-Project: medscope", "-H", `X-Appwrite-Key: ${key}`, "-H", "Content-Type: application/json"];
   if (body) {
-    const tmp = path.join(__dirname, "..", "scratchpad-tmp", "body.json");
+    const tmp = path.join(root, "scratchpad-tmp", "body.json");
     fs.writeFileSync(tmp, JSON.stringify(body));
     args.push("--data", `@${tmp}`);
   }
@@ -25,13 +28,21 @@ function api(method, urlPath, body) {
     await new Promise((r) => setTimeout(r, 5000));
   }
 
-  // Guest smoke test: no API key header, just the project header
-  const tmp = path.join(__dirname, "..", "scratchpad-tmp", "smoke.json");
-  fs.writeFileSync(tmp, JSON.stringify({ imageDataUrl: "data:image/png;base64,iVBORw0KGgo=", lang: "en" }));
-  const out = execSync(
-    `curl -s -X POST "${BASE}/functions/ai-proxy/executions" -H "X-Appwrite-Project: medscope" -H "Content-Type: application/json" --data "@${tmp}"`,
-    { encoding: "utf8", timeout: 120000 }
-  );
-  const j = JSON.parse(out);
-  console.log("smoke:", j.status, String(j.responseBody || "").slice(0, 200));
+  // Real image → data URL
+  const imgPath = path.join(root, "ui-fonts.png");
+  const b64 = fs.readFileSync(imgPath).toString("base64");
+  const payload = { imageDataUrl: `data:image/png;base64,${b64}`, lang: "en" };
+
+  const exec = api("POST", "/functions/ai-proxy/executions", { body: JSON.stringify(payload) });
+  console.log("execution:", exec.$id, "status:", exec.status);
+  if (exec.responseBody) {
+    console.log("response:", String(exec.responseBody).slice(0, 400));
+    try {
+      const outer = JSON.parse(exec.responseBody);
+      const inner = JSON.parse(/({[\s\S]*})/.exec(outer.content || "{}")[1]);
+      console.log("parsed fields:", JSON.stringify({ nickname: inner.nickname, name: inner.name, strength: inner.strength, times: inner.times, dosePerSlot: inner.dosePerSlot }));
+    } catch (e) {
+      console.log("content not JSON-parseable:", String(e).slice(0, 120));
+    }
+  }
 })();

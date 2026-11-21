@@ -86,8 +86,18 @@ module.exports = async ({ req, res, log, error }) => {
 
   try {
     const parsed = JSON.parse(upstream.text);
-    const content = parsed.choices?.[0]?.message?.content ?? "";
-    return res.json({ content });
+    const choice = parsed.choices?.[0];
+    const content = choice?.message?.content ?? "";
+    // Debug fields help diagnose empty/blocked responses; harmless to keep.
+    return res.json({
+      content,
+      debug: {
+        finish_reason: choice?.finish_reason ?? null,
+        model: parsed.model ?? null,
+        usage: parsed.usage ?? null,
+        choices_len: (parsed.choices || []).length,
+      },
+    });
   } catch (e) {
     error("parse: " + String(e).slice(0, 150));
     return res.json({ error: "Bad upstream response" }, 502);
