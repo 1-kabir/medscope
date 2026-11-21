@@ -11,6 +11,9 @@ tsconfig.tsbuildinfo
 .env
 .env.local
 .env.*.local
+body.json
+tmp-var.json
+tmp-*.json
 
 # Command Code local state
 .commandcode/

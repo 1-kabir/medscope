@@ -7,7 +7,8 @@ const BASE = "https://appwrite.kabirstudios.com/v1";
 function api(method, urlPath, body) {
   const args = ["-s", "-X", method, `${BASE}${urlPath}`, "-H", "X-Appwrite-Project: medscope", "-H", `X-Appwrite-Key: ${key}`, "-H", "Content-Type: application/json"];
   if (body) {
-    const tmp = path.join(__dirname, "body.json");
+    const tmp = path.join(__dirname, "..", "..", "scratchpad-tmp", "body.json");
+    fs.mkdirSync(path.dirname(tmp), { recursive: true });
     fs.writeFileSync(tmp, JSON.stringify(body));
     args.push("--data", `@${tmp}`);
   }
