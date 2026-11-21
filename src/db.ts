@@ -51,6 +51,7 @@ export type Member = {
   phone: string; // family members only
   deviceKey: string; // elder members only, "" when unclaimed
   pauseUntil: number; // epoch ms, 0 = not paused (elder members only)
+  lang?: string; // elder's spoken language, for the voice agent (default bn)
   synced: boolean;
 };
 
@@ -540,14 +541,16 @@ export function logToDoc(l: DoseLog): Record<string, unknown> {
 // Registration creates/claims this device's member. Names live on the member;
 // the devices row is only a binding (and, later, a push-token holder).
 
-export async function registerDevice(role: "elder" | "family"): Promise<void> {
+export async function registerDevice(role: "elder" | "family", lang?: string): Promise<void> {
   const s = await getSettings();
   if (!s.householdId) return;
   const existingName = (await getSetting<string>("deviceName")) ?? "";
   const members = await listMembers();
   const mine = members.find((m) => m.deviceKey === s.deviceKey);
   if (mine) {
-    if (mine.role !== role) await saveMember({ ...mine, role, synced: false });
+    if (mine.role !== role || (lang && mine.lang !== lang)) {
+      await saveMember({ ...mine, role, lang: lang ?? mine.lang ?? "bn", synced: false });
+    }
     await setMyMemberId(mine.id);
     return;
   }
@@ -559,6 +562,7 @@ export async function registerDevice(role: "elder" | "family"): Promise<void> {
     phone: "",
     deviceKey: s.deviceKey,
     pauseUntil: 0,
+    lang: lang ?? "bn",
     synced: false,
   };
   await saveMember(m);

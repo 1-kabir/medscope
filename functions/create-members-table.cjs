@@ -36,6 +36,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     { key: "phone", type: "varchar", size: 32 },
     { key: "deviceKey", type: "varchar", size: 64 },
     { key: "pauseUntil", type: "integer" },
+    { key: "lang", type: "varchar", size: 8 },
     { key: "householdId", type: "varchar", size: 64 },
   ];
   for (const c of columns) {

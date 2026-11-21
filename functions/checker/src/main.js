@@ -211,6 +211,58 @@ async function sarvamCall(to, spokenText) {
   return { ok: r.status >= 200 && r.status < 300, status: r.status, body: r.text.slice(0, 200) };
 }
 
+// Sarvam Voice Agent: instant outbound call to the ELDER. The agent speaks the
+// reminder in the elder's language and waits for a spoken confirmation; the
+// call outcome arrives at the voice-webhook function. Requires the agent to be
+// deployed on the rented number (see README). Falls back to the plain call API
+// when the Voice Agent env block is not configured.
+const VA = {
+  orgId: process.env.SARVAM_VA_ORG_ID || "",
+  workspaceId: process.env.SARVAM_VA_WORKSPACE_ID || "",
+  apiKey: process.env.SARVAM_VA_API_KEY || "",
+  appId: process.env.SARVAM_VA_APP_ID || "",
+  appVersion: Number(process.env.SARVAM_VA_APP_VERSION || 1),
+  connectionId: process.env.SARVAM_VA_CONNECTION_ID || "",
+  agentPhone: process.env.SARVAM_VA_AGENT_PHONE || "",
+  webhookUrl: process.env.VOICE_WEBHOOK_URL || "",
+};
+const VA_CONFIGURED = Boolean(VA.orgId && VA.workspaceId && VA.apiKey && VA.appId && VA.connectionId && VA.agentPhone);
+
+const SPOKEN_LANG = { bn: "Bengali", hi: "Hindi", en: "English" };
+
+function elderGreeting(lang, elderName, medicine) {
+  const name = elderName ? elderName + ", " : "";
+  if (lang === "hi") return `${name}${medicine} लेने का समय हो गया। क्या आपने दवा ले ली? कृपया अब दवा ले लीजिए।`;
+  if (lang === "en") return `${name}it is time for your ${medicine}. Have you taken it? Please take it now.`;
+  return `${name}${medicine} খাওয়ার সময় হয়েছে। আপনি কি ওষুধ খেয়ে নিয়েছেন? অনুগ্রহ করে এখন ওষুধটি খেয়ে নিন।`;
+}
+
+async function voiceAgentCall(to, opts) {
+  if (!VA_CONFIGURED) return sarvamCall(to, opts.greeting);
+  const body = {
+    app_config: {
+      app_id: VA.appId,
+      app_version: VA.appVersion,
+      connection_config: { connection_id: VA.connectionId, agent_phone_number: VA.agentPhone },
+      agent_variables: { elder_name: opts.elderName || "", medicine: opts.medicine, slot: opts.slot },
+      app_overrides: {
+        initial_bot_message: opts.greeting,
+        ...(SPOKEN_LANG[opts.lang] ? { initial_language_name: SPOKEN_LANG[opts.lang] } : {}),
+      },
+    },
+    user_config: { user_phone_number: to },
+    ...(VA.webhookUrl ? { webhook_config: { url: VA.webhookUrl, metadata: { medicineId: opts.medicineId, slot: opts.slot, date: opts.date, householdId: opts.householdId, elderPhone: to } } } : {}),
+  };
+  const r = await request(`${"https://apps.sarvam.ai/api/outbounds/v1/orgs/" + VA.orgId + "/workspaces/" + VA.workspaceId + "/outbounds"}`, {
+    method: "POST",
+    headers: { "X-API-Key": VA.apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let attemptId = null;
+  try { attemptId = JSON.parse(r.text).attempt_id || null; } catch { /* keep null */ }
+  return { ok: r.status >= 200 && r.status < 300, status: r.status, attemptId, via: "voice-agent", body: r.text.slice(0, 200) };
+}
+
 // One delivery attempt for one contact and channel, keyed by a stable alert ID.
 // Already-sent alerts are left alone; failed or skipped ones are tried again on
 // this run, and the attempt count is carried in the alert row.
@@ -242,6 +294,7 @@ async function deliver({ alertsById, summary, id, channel, number, text, hint, d
   const saved = prev ? await updateRow("alerts", id, row) : await createRow("alerts", id, row);
   if (!saved) error(`could not record ${channel} alert ${id}`);
   alertsById.set(id, { $id: id, ...row });
+  return result;
 }
 
 module.exports = async ({ req, res, log, error }) => {
@@ -354,24 +407,40 @@ module.exports = async ({ req, res, log, error }) => {
             });
           }
 
-          // The elder's phone gets the call: the voice agent speaks, waits for
-          // a spoken confirmation, and reports the outcome.
+          // The elder's phone gets the voice-agent call: it speaks the reminder
+          // in the elder's language and waits for a spoken confirmation. The
+          // call outcome arrives at the voice-webhook; the app is the other
+          // confirmation path.
           if (overdue >= CALL_AFTER_MINUTES) {
-            const spoken = `সাবধানবার্তা। ${med.nickname} খাওয়া হয়নি। অনুগ্রহ করে ওষুধ খেয়ে নিন।`;
+            const elderMember = allMembers.find((m) => m.id === med.elderId || m.deviceKey === med.elderId);
+            const elderLang = elderMember?.lang || "bn";
+            const greeting = elderGreeting(elderLang, elderMember?.name || "", med.nickname);
             for (const number of elderNumbers(householdId)) {
-              await deliver({
+              const outcome = await deliver({
                 alertsById,
                 summary,
                 id: rowId("call", [med.$id, slot, date, number]),
                 channel: "call",
                 number,
-                text: spoken,
+                text: greeting,
                 hint: `${date} ${slot}`,
-                data: { elderId: med.elderId || "", medicineId: med.$id, message: `${med.nickname} ${slot} call elder -> ${number}`, householdId },
-                send: () => sarvamCall(number, spoken),
+                data: { elderId: med.elderId || "", medicineId: med.$id, message: `${med.nickname} ${slot} voice-agent call -> ${number}`, householdId },
+                send: () => voiceAgentCall(number, {
+                  greeting,
+                  lang: elderLang,
+                  elderName: elderMember?.name || "",
+                  medicine: med.nickname,
+                  slot,
+                  date,
+                  householdId,
+                  medicineId: med.$id,
+                }),
                 log,
                 error,
               });
+              if (outcome && outcome.attemptId) {
+                await updateRow("alerts", rowId("call", [med.$id, slot, date, number]), { message: `${med.nickname} ${slot} call attempt ${outcome.attemptId}` }).catch(() => {});
+              }
             }
           }
 
