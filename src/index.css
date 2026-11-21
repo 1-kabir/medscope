@@ -1,1 +1,74 @@
 @import "tailwindcss";
+
+:root {
+  /* Canvas & surfaces — warm paper, whisper chroma */
+  --color-canvas: oklch(0.98 0.005 85);
+  --color-surface: oklch(1 0 0);
+  --color-surface-muted: oklch(0.955 0.008 85);
+
+  /* Ink */
+  --color-ink: oklch(0.25 0.01 85);
+  --color-ink-secondary: oklch(0.45 0.01 85);
+  --color-ink-tertiary: oklch(0.58 0.008 85);
+
+  /* Accent — confirm only. Deep calm green-teal. */
+  --color-accent: oklch(0.55 0.12 165);
+  --color-accent-strong: oklch(0.48 0.12 165);
+  --color-accent-soft: oklch(0.93 0.04 165);
+
+  /* Attention — missed doses only */
+  --color-alert: oklch(0.58 0.16 30);
+  --color-alert-soft: oklch(0.95 0.03 30);
+
+  /* Defer — yellow action */
+  --color-defer: oklch(0.8 0.14 95);
+  --color-defer-strong: oklch(0.55 0.12 95);
+
+  /* Hairline */
+  --color-line: oklch(0.9 0.006 85);
+
+  --radius-card: 1.25rem;
+  --radius-button: 1rem;
+}
+
+html {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: "Noto Sans Bengali", "Noto Sans Devanagari", "Noto Sans", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  line-height: 1.6;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+input, select, textarea {
+  font: inherit;
+  font-size: 1rem;
+  color: var(--color-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
