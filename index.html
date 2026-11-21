@@ -1,15 +1,158 @@
 <!doctype html>
-<html lang="bn">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f172a" />
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <title>MedScope</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MedscopeOne — medicine reminders for elders</title>
+<meta name="description" content="A voice-first medicine companion for elderly people. Speaks in Bengali, Hindi and English. Reminders only — free for the elder." />
+<style>
+  :root {
+    --paper: #faf9f6;
+    --surface: #ffffff;
+    --ink: #2b2925;
+    --ink-2: #5c5952;
+    --ink-3: #8a867d;
+    --line: #e6e3dc;
+    --accent: #1d6b52;
+    --accent-ink: #ffffff;
+    --warn: #a3402a;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { background: var(--paper); color: var(--ink); }
+  body {
+    font-family: "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; padding: 0 1.5rem; }
+
+  header {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .header-in {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 1.25rem 0;
+  }
+  .brand { font-weight: 700; letter-spacing: -0.01em; }
+  .brand span { color: var(--accent); }
+  header nav a { color: var(--ink-2); text-decoration: none; font-size: 0.95rem; }
+  header nav a:hover { color: var(--ink); }
+
+  h1 {
+    font-size: clamp(2rem, 5vw, 3rem);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+    margin: 3.5rem 0 1rem;
+  }
+  .lede { font-size: 1.25rem; color: var(--ink-2); max-width: 38rem; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  h2 {
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 3.5rem 0 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .points { list-style: none; padding: 0; }
+  .points li {
+    display: flex; gap: 1rem;
+    padding: 0.9rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .points li:last-child { border-bottom: none; }
+  .points .num {
+    color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums;
+    min-width: 1.5rem;
+  }
+
+  dl { display: grid; grid-template-columns: 1fr; gap: 1.25rem; }
+  @media (min-width: 40rem) { dl { grid-template-columns: 1fr 1fr; } }
+  dt { font-weight: 700; margin-bottom: 0.25rem; }
+  dd { color: var(--ink-2); font-size: 0.98rem; }
+
+  .note {
+    margin: 3.5rem 0;
+    padding: 1.25rem 1.5rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    font-size: 0.98rem;
+    color: var(--ink-2);
+  }
+  .note strong { color: var(--ink); }
+
+  .bn { font-size: 1.05em; }
+
+  footer {
+    margin-top: 4rem;
+    border-top: 1px solid var(--line);
+    padding: 1.5rem 0 3rem;
+    color: var(--ink-3);
+    font-size: 0.9rem;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap header-in">
+    <div class="brand">Medscope<span>One</span></div>
+    <nav><a href="#how">How it works</a></nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Medicine reminders your parents can hear, not read.</h1>
+  <p class="lede">
+    MedscopeOne is a <strong>voice-first medicine companion</strong> for elderly
+    people. At every dose time, the phone speaks in
+    <span class="bn" lang="bn">বাংলা</span> —
+    <em>“এখন ওষুধ খাওয়ার সময়”</em> — and the elder presses one large button.
+    Everything works offline, on an inexpensive Android phone.
+  </p>
+
+  <h2 id="how">How it works</h2>
+  <ol class="points">
+    <li><span class="num">1</span><span>A family member photographs the medicine strips once. The app reads them and builds the dose schedule.</span></li>
+    <li><span class="num">2</span><span>At each dose time the phone speaks the reminder in the elder’s own language. One big button confirms the dose was taken.</span></li>
+    <li><span class="num">3</span><span>If a dose goes untaken, the family is alerted over WhatsApp automatically — with a second warning if it is still not taken.</span></li>
+    <li><span class="num">4</span><span>When tablets run low, the family is told how many days are left, with a direct link to reorder.</span></li>
+  </ol>
+
+  <h2>What it does, plainly</h2>
+  <dl>
+    <div><dt>Speaks, doesn’t show</dt><dd>Giant text and spoken reminders in Bengali, Hindi or English. No reading required, no login, no complexity.</dd></div>
+    <div><dt>Works without internet</dt><dd>Reminders, speech and logging run entirely on the phone. Slow networks and power cuts don’t matter.</dd></div>
+    <div><dt>Keeps the family in the loop</dt><dd>Every dose is logged as taken or missed. The family sees today’s record and the week at a glance.</dd></div>
+    <div><dt>Counts every tablet</dt><dd>Stock counts down with each dose, warns a few days ahead, and points to the cheapest reorder.</dd></div>
+    <div><dt>Set up in minutes</dt><dd>One phone photographs the strips; the other phone joins with a 6-digit family code. Several elders and several family members are supported.</dd></div>
+    <div><dt>Respects its limits</dt><dd>MedscopeOne reminds. It never diagnoses, never changes a dose, and never gives medical advice.</dd></div>
+  </dl>
+
+  <div class="note">
+    <strong>Free for the elder, forever.</strong> The cost is carried by the
+    panchayat and the state health department. There is no account to create,
+    nothing to pay, and nothing to learn — the phone does the remembering.
+  </div>
+
+  <p style="margin: 0 0 3.5rem;">
+    <a href="/app.html" style="display:inline-block; background: var(--accent); color: var(--accent-ink); text-decoration:none; font-weight:700; font-size:1.1rem; padding:1rem 2.5rem; border-radius:0.75rem;">Open the app</a>
+  </p>
+
+  <footer>
+    <div class="wrap" style="padding:0">
+      MedscopeOne — a public-health pilot for West Bengal.
+      Reminders only, never medical advice.
+    </div>
+  </footer>
+</main>
+
+</body>
 </html>

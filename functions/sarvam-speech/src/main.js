@@ -33,8 +33,8 @@ async function tts(text, lang) {
     body: JSON.stringify({
       inputs: [text],
       target_language_code: TTS_LANG[lang] || "bn-IN",
-      speaker: "anushka",
-      model: "bulbul:v2",
+      speaker: "priya",
+      model: "bulbul:v3",
       speech_sample_rate: 22050,
     }),
   });
