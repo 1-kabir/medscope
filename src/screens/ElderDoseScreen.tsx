@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listMedicines, logDose, undoDose, listContacts, logsByDate, setSetting, getSettings, type Medicine, type DoseLog } from "../db";
+import { listMedicines, logDose, undoDose, listContacts, logsByDate, setSetting, getSettings, setPause, type Medicine, type DoseLog } from "../db";
 import { t, localizeNumber, LANGUAGES, type Lang } from "../i18n";
 import { stopSpeaking, SpeakerIcon, useSpeaker } from "../speech";
 import AddMedicineFlow from "./family/AddMedicineFlow";
@@ -32,9 +32,13 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
   const [addingMedicine, setAddingMedicine] = useState(false);
   const [managingContacts, setManagingContacts] = useState(false);
   const [householdCode, setHouseholdCode] = useState<string | null>(null);
+  const [pauseUntil, setPauseUntil] = useState<number | null>(null);
 
   useEffect(() => {
-    void getSettings().then((s) => setHouseholdCode(s.householdId));
+    void getSettings().then((s) => {
+      setHouseholdCode(s.householdId);
+      if (s.pauseUntil && Date.now() < s.pauseUntil) setPauseUntil(s.pauseUntil);
+    });
   }, []);
   const spokeFor = useRef<string | null>(null);
   const speak = useSpeaker(lang);
@@ -70,12 +74,15 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
     return { dose: next, state: s, remainingToday: remaining };
   }, [medicines, logs, deferringUntil]);
 
+  // Paused: skip spoken reminders entirely.
+  const paused = pauseUntil !== null && Date.now() < pauseUntil;
+
   // Spoken reminder: speak on due entry, then re-speak every 3 min until answered.
   // Also schedules a Web Notification per due dose (fires even when the screen
   // is off or the browser is backgrounded) and holds a WakeLock while the
   // dose screen is on, so the phone does not sleep mid-reminder.
   useEffect(() => {
-    if (state !== "due" || !dose) return;
+    if (state !== "due" || !dose || paused) return;
     const key = dose.med.id + dose.slot;
     if (spokeFor.current === key) return;
     spokeFor.current = key;
@@ -105,7 +112,7 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
       clearInterval(repeat);
       wakeLock?.release().catch(() => {});
     };
-  }, [state, dose, lang, speak]);
+  }, [state, dose, lang, speak, paused]);
 
   // Countdown tick while deferring
   const [, forceTick] = useState(0);
@@ -126,6 +133,7 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
         slot: d.slot,
         date: today(),
         status: "taken",
+        units: d.med.dosePerSlot ?? 1,
         at: Date.now(),
         synced: false,
       });
@@ -148,6 +156,7 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
         slot: d.slot,
         date: today(),
         status: "deferred",
+        units: 0,
         at: Date.now(),
         synced: false,
       });
@@ -268,6 +277,23 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
             {lang === "en" ? "Allow dose notifications" : lang === "hi" ? "डोज़ सूचना चालू करें" : "ডোজের নোটিফিকেশন চালু করুন"}
           </button>
         )}
+        <div className="mt-4">
+          <p className="text-base font-semibold text-[var(--color-ink-secondary)]">{t(lang, "pauseTitle")}</p>
+          <div className="flex gap-3 mt-2">
+            <button
+              onClick={() => { void setPause(Date.now() + 3 * 86400_000).then(() => setPauseUntil(Date.now() + 3 * 86400_000)); }}
+              className="flex-1 text-lg font-bold py-4 rounded-2xl border-2 border-[var(--color-line)]"
+            >
+              {lang === "en" ? "3 days" : lang === "hi" ? "३ दिन" : "৩ দিন"}
+            </button>
+            <button
+              onClick={() => { void setPause(null).then(() => setPauseUntil(null)); }}
+              className="flex-1 text-lg font-bold py-4 rounded-2xl border-2 border-[var(--color-line)]"
+            >
+              {t(lang, "resumeBtn")}
+            </button>
+          </div>
+        </div>
         <div className="mt-6 flex justify-center gap-3">
           {LANGUAGES.map((l) => (
             <button
@@ -285,6 +311,24 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
   }
 
   const firstContact = contacts[0];
+
+  // Paused overlay — quiet, one-tap resume
+  if (paused && !confirmingSetup && justTaken === null) {
+    return (
+      <main className="anim-screen min-h-dvh flex flex-col items-center justify-center px-6 text-center max-w-md mx-auto">
+        <p className="text-3xl font-bold">{t(lang, "pauseTitle")}</p>
+        <p className="text-xl text-[var(--color-ink-secondary)] mt-3">
+          {t(lang, "pausedUntil", { n: localizeNumber(new Date(pauseUntil ?? Date.now()).toLocaleDateString(lang === "bn" ? "bn-BD" : lang === "hi" ? "hi-IN" : "en-IN"), lang) })}
+        </p>
+        <button
+          onClick={() => { void setPause(null).then(() => setPauseUntil(null)); }}
+          className="mt-8 w-full text-2xl font-bold py-6 rounded-2xl bg-[var(--color-accent)] text-white active:bg-[var(--color-accent-strong)]"
+        >
+          {t(lang, "resumeBtn")}
+        </button>
+      </main>
+    );
+  }
 
   return (
     <main className="anim-screen min-h-dvh flex flex-col px-6 py-8 max-w-md mx-auto">

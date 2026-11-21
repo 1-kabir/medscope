@@ -12,7 +12,8 @@ export type Medicine = {
   strength: string;
   instruction: string;
   times: string[]; // "08:00"
-  tabletsLeft: number;
+  dosePerSlot: number; // tablets per dose: 0.25, 0.5, 1, 2...
+  tabletsLeft: number; // fractional — a half tablet counts as 0.5
   createdAt: number;
   synced: boolean;
 };
@@ -25,6 +26,7 @@ export type DoseLog = {
   slot: string; // "08:00"
   date: string; // "2026-11-21"
   status: "taken" | "missed" | "deferred";
+  units: number; // tablets consumed by this dose
   at: number;
   synced: boolean;
 };
@@ -49,10 +51,12 @@ export type Settings = {
   mode: "elder" | "family" | null;
   deviceKey: string;
   householdId: string | null;
+  // Pause: no reminders spoken, no escalation, stock doesn't expect consumption.
+  pauseUntil: number | null; // epoch ms — device returns automatically when it passes
 };
 
 const DB_NAME = "medscope";
-const DB_VERSION = 2; // v2: added "devices" store — bump when changing the store layout
+const DB_VERSION = 3; // v3: pause settings in settings store (no-op migration); added dosePerSlot/units fields
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -132,18 +136,18 @@ export async function logDose(l: DoseLog): Promise<void> {
     l.elderId = s.deviceKey;
   }
   await put("taken", l);
-  // decrement stock locally
+  // decrement stock locally by the dose's units
   const medicines = await listMedicines();
   const med = medicines.find((m) => m.id === l.medicineId);
-  if (med && l.status === "taken" && med.tabletsLeft > 0) {
-    med.tabletsLeft -= 1;
+  if (med && l.status === "taken" && l.units > 0) {
+    med.tabletsLeft = Math.max(0, med.tabletsLeft - l.units);
     med.synced = false;
     await saveMedicine(med);
   }
   queueSync(Collections.takenLogs, l.id, logToDoc(l));
 }
 
-// Undo a taken log: remove the local log and restore the tablet.
+// Undo a taken log: remove the local log and restore the tablets.
 export async function undoDose(logId: string): Promise<void> {
   const db = await open();
   const store = db.transaction("taken", "readwrite").objectStore("taken");
@@ -154,15 +158,20 @@ export async function undoDose(logId: string): Promise<void> {
     const medicines = await listMedicines();
     const med = medicines.find((m) => m.id === log.medicineId);
     if (med) {
-      med.tabletsLeft += 1;
+      med.tabletsLeft += log.units || 1;
       med.synced = false;
       await saveMedicine(med);
     }
     // Deleting a synced row requires server-side delete; mark it superseded instead.
     if (log.synced) {
-      await logDose({ ...log, id: crypto.randomUUID(), status: "missed", at: Date.now(), synced: false });
+      await logDose({ ...log, id: crypto.randomUUID(), status: "missed", units: 0, at: Date.now(), synced: false });
     }
   }
+}
+
+export async function deleteLog(logId: string): Promise<void> {
+  const db = await open();
+  await reqAs(db.transaction("taken", "readwrite").objectStore("taken").delete(logId));
 }
 
 export async function logsByDate(date: string): Promise<DoseLog[]> {
@@ -206,12 +215,28 @@ export async function getSettings(): Promise<Settings> {
     deviceKey = crypto.randomUUID();
     await setSetting("deviceKey", deviceKey);
   }
-  const [lang, mode, householdId] = await Promise.all([
+  const [lang, mode, householdId, pauseUntil] = await Promise.all([
     getSetting<Lang>("lang"),
     getSetting<Settings["mode"]>("mode"),
     getSetting<string>("householdId"),
+    getSetting<number | null>("pauseUntil"),
   ]);
-  return { deviceKey, lang: lang ?? "bn", mode: mode ?? null, householdId: householdId ?? null };
+  return { deviceKey, lang: lang ?? "bn", mode: mode ?? null, householdId: householdId ?? null, pauseUntil: pauseUntil ?? null };
+}
+
+// Pause reminders: away at a wedding, hospital visit — no noise, no false misses.
+export async function setPause(until: number | null): Promise<void> {
+  await setSetting("pauseUntil", until);
+}
+
+export async function isPaused(): Promise<boolean> {
+  const until = await getSetting<number | null>("pauseUntil");
+  if (!until) return false;
+  if (Date.now() > until) {
+    await setSetting("pauseUntil", null);
+    return false;
+  }
+  return true;
 }
 
 // ---- Household linking ----
@@ -271,6 +296,7 @@ export function medicineToDoc(m: Medicine): Record<string, unknown> {
     instruction: m.instruction,
     times: JSON.stringify(m.times),
     tabletsLeft: m.tabletsLeft,
+    dosePerSlot: m.dosePerSlot ?? 1,
     createdAt: m.createdAt,
   };
 }
@@ -283,6 +309,7 @@ export function logToDoc(l: DoseLog): Record<string, unknown> {
     slot: l.slot,
     date: l.date,
     status: l.status,
+    units: l.units ?? 0,
     at: l.at,
   };
 }
@@ -346,6 +373,7 @@ export async function pullHousehold(): Promise<void> {
         instruction: String(d.instruction ?? ""),
         times: JSON.parse(String(d.times ?? "[]")) as string[],
         tabletsLeft: Number(d.tabletsLeft ?? 0),
+        dosePerSlot: Number(d.dosePerSlot ?? 1),
         createdAt: Number(d.createdAt ?? 0),
         synced: true,
       };
@@ -361,6 +389,7 @@ export async function pullHousehold(): Promise<void> {
         slot: String(d.slot ?? ""),
         date: String(d.date ?? ""),
         status: (d.status as DoseLog["status"]) ?? "missed",
+        units: Number(d.units ?? 0),
         at: Number(d.at ?? 0),
         synced: true,
       };

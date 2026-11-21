@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { logsSince, listDevices, type DoseLog, type DeviceInfo } from "../../db";
+import { logsSince, listDevices, logDose, deleteLog, listMedicines, isPaused, type DoseLog, type DeviceInfo } from "../../db";
 import { t, localizeNumber, type Lang } from "../../i18n";
 
 export default function HistoryScreen({ lang, onBack }: { lang: Lang; onBack: () => void }) {
@@ -10,7 +10,25 @@ export default function HistoryScreen({ lang, onBack }: { lang: Lang; onBack: ()
   useEffect(() => {
     void logsSince(7).then(setLogs);
     void listDevices().then(setDevices);
+    void isPaused().then(setPausedState);
   }, []);
+
+  async function takeLate(log: DoseLog) {
+    const medicines = await listMedicines();
+    const med = medicines.find((m) => m.id === log.medicineId);
+    await logDose({
+      id: crypto.randomUUID(),
+      medicineId: log.medicineId,
+      nickname: log.nickname,
+      slot: log.slot,
+      date: log.date,
+      status: "taken",
+      units: med?.dosePerSlot ?? 1,
+      at: Date.now(),
+      synced: false,
+    });
+    await deleteLog(log.id);
+  }
 
   const multiElder = new Set(logs.map((l) => l.elderId)).size > 1;
   const elderName = (id?: string) => (id ? devices.find((d) => d.id === id)?.name : undefined);
@@ -22,6 +40,13 @@ export default function HistoryScreen({ lang, onBack }: { lang: Lang; onBack: ()
     }
     return logs;
   }, [logs, range]);
+
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [paused, setPausedState] = useState(false);
+
+  async function refresh() {
+    setLogs(await logsSince(7));
+  }
 
   const days = useMemo(() => {
     const map = new Map<string, DoseLog[]>();
@@ -53,6 +78,12 @@ export default function HistoryScreen({ lang, onBack }: { lang: Lang; onBack: ()
         ))}
       </div>
 
+      {paused && (
+        <div className="mt-5 p-4 rounded-2xl bg-[var(--color-alert-soft)] text-[var(--color-alert)] font-semibold text-lg text-center">
+          {t(lang, "pauseTitle")}
+        </div>
+      )}
+
       <div className="mt-6 space-y-6">
         {days.length === 0 && <p className="text-lg text-[var(--color-ink-secondary)]">—</p>}
         {days.map(([date, dayLogs]) => (
@@ -69,7 +100,20 @@ export default function HistoryScreen({ lang, onBack }: { lang: Lang; onBack: ()
                     <p className="text-base text-[var(--color-ink-secondary)]">{localizeNumber(l.slot, lang)}</p>
                   </div>
                   <span className={`text-lg font-semibold ${l.status === "taken" ? "text-[var(--color-accent)]" : "text-[var(--color-alert)]"}`}>
-                    {l.status === "taken" ? `✓ ${localizeNumber(new Date(l.at).toTimeString().slice(0, 5), lang)}` : t(lang, "missed")}
+                    {l.status === "taken" ? (
+                      `✓ ${localizeNumber(new Date(l.at).toTimeString().slice(0, 5), lang)}`
+                    ) : confirmId === l.id ? (
+                      <span className="flex gap-2">
+                        <button onClick={() => void takeLate(l).then(() => { setConfirmId(null); void refresh(); })} className="px-3 py-1 rounded-lg bg-[var(--color-accent)] text-white text-base">
+                          {t(lang, "tookLate")}
+                        </button>
+                        <button onClick={() => setConfirmId(null)} className="px-3 py-1 rounded-lg bg-[var(--color-surface-muted)] text-base">
+                          ✕
+                        </button>
+                      </span>
+                    ) : (
+                      <button onClick={() => setConfirmId(l.id)}>{t(lang, "missed")}</button>
+                    )}
                   </span>
                 </div>
               ))}

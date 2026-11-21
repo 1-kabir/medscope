@@ -4,9 +4,9 @@ import { t, localizeNumber, type Lang } from "../../i18n";
 import { useSpeaker, SpeakerIcon } from "../../speech";
 
 function daysUntilEmpty(m: Medicine): number | null {
-  const perDay = m.times.length;
-  if (perDay === 0) return null;
-  return Math.floor(m.tabletsLeft / perDay);
+  const dailyUnits = m.times.length * (m.dosePerSlot ?? 1);
+  if (dailyUnits <= 0) return null;
+  return Math.floor(m.tabletsLeft / dailyUnits);
 }
 
 // 1mg search deep link — we hand off and stop. No fake checkout.

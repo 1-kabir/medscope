@@ -6,9 +6,9 @@ import AddMedicineFlow from "./AddMedicineFlow";
 import MedicineDetail from "./MedicineDetail";
 
 function daysUntilEmpty(m: Medicine): number | null {
-  const perDay = m.times.length;
-  if (perDay === 0) return null;
-  return Math.floor(m.tabletsLeft / perDay);
+  const dailyUnits = m.times.length * (m.dosePerSlot ?? 1);
+  if (dailyUnits <= 0) return null;
+  return Math.floor(m.tabletsLeft / dailyUnits);
 }
 
 export default function MedicineListScreen({

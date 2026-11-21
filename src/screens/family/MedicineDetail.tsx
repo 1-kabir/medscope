@@ -59,6 +59,26 @@ export default function MedicineDetail({ lang, id, onBack }: { lang: Lang; id: s
         </div>
       </div>
 
+      <div className="mt-8">
+        <p className="text-base font-semibold text-[var(--color-ink-secondary)] mb-3">{t(lang, "dosePerSlotLabel")}</p>
+        <div className="flex flex-wrap gap-3">
+          {[0.25, 0.5, 1, 2].map((u) => (
+            <button
+              key={u}
+              onClick={() => {
+                const updated = { ...med, dosePerSlot: u, synced: false };
+                setMed(updated);
+                void saveMedicine(updated);
+              }}
+              aria-pressed={(med.dosePerSlot ?? 1) === u}
+              className={`text-xl px-5 py-4 rounded-xl border-2 font-semibold ${(med.dosePerSlot ?? 1) === u ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-line)]"}`}
+            >
+              {localizeNumber(u, lang)}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* 7-day adherence strip */}
       <div className="mt-8">
         <p className="text-base font-semibold text-[var(--color-ink-secondary)] mb-3">{t(lang, "week")}</p>

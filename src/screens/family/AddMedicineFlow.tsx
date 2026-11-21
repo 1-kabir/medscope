@@ -16,6 +16,7 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
   const [strength, setStrength] = useState("");
   const [times, setTimes] = useState<string[]>([DEFAULT_SLOTS[0]]);
   const [tablets, setTablets] = useState(30);
+  const [dosePerSlot, setDosePerSlot] = useState(1);
   const speak = useSpeaker(lang);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -44,6 +45,7 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
       strength,
       instruction: t(lang, "withWater"),
       times: times.length ? times : [DEFAULT_SLOTS[0]],
+      dosePerSlot,
       tabletsLeft: tablets,
       createdAt: Date.now(),
       synced: false,
@@ -130,6 +132,21 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
                   className={`text-xl px-5 py-4 rounded-xl border-2 font-semibold ${times.includes(slot) ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-line)] bg-[var(--color-surface)]"}`}
                 >
                   {slot}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="text-base font-semibold text-[var(--color-ink-secondary)]">{t(lang, "dosePerSlotLabel")}</span>
+            <div className="flex flex-wrap gap-3 mt-2">
+              {[0.25, 0.5, 1, 2].map((u) => (
+                <button
+                  key={u}
+                  onClick={() => setDosePerSlot(u)}
+                  aria-pressed={dosePerSlot === u}
+                  className={`text-xl px-5 py-4 rounded-xl border-2 font-semibold ${dosePerSlot === u ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-line)] bg-[var(--color-surface)]"}`}
+                >
+                  {localizeNumber(u, lang)}
                 </button>
               ))}
             </div>
