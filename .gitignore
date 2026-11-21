@@ -39,3 +39,7 @@ Thumbs.db
 # Local UI screenshots
 ui-*.png
 scratchpad-tmp/  
+
+# Local screenshots / temp scripts
+landing-*.png
+scratchpad-*.cjs
