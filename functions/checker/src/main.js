@@ -76,12 +76,28 @@ async function sendWhatsApp(to, text, slotHint) {
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!token || !phoneId) return { skipped: "credentials not set" };
 
-  // Business-initiated messages REQUIRE a template unless the recipient has
-  // replied within 24h (customer service window). The test number also only
-  // delivers to recipients verified in the API Setup "To" list (max 5).
+  // Try a personalized plain text first — it works when the recipient has
+  // messaged us within 24h (open customer service window). If the window is
+  // closed, the API rejects it and we fall back to a template message
+  // (hello_world by default, or a custom one via WHATSAPP_TEMPLATE_NAME).
+  const textBody = JSON.stringify({
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "text",
+    text: { body: text },
+  });
+  const textRes = await request(`https://graph.facebook.com/v23.0/${phoneId}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: textBody,
+  });
+  if (textRes.status >= 200 && textRes.status < 300) {
+    return { ok: true, via: "text", status: textRes.status };
+  }
+
   const templateName = process.env.WHATSAPP_TEMPLATE_NAME || "hello_world";
   const templateLang = process.env.WHATSAPP_TEMPLATE_LANG || "en_US";
-
   const message = {
     messaging_product: "whatsapp",
     recipient_type: "individual",
@@ -89,8 +105,8 @@ async function sendWhatsApp(to, text, slotHint) {
     type: "template",
     template: { name: templateName, language: { code: templateLang } },
   };
-  // A custom template with body variables: {{1}} medicine, {{2}} date+time.
-  // hello_world has no variables, so components are only sent for custom ones.
+  // Custom templates can carry body variables: {{1}} medicine, {{2}} date+time.
+  // hello_world has none, so components are only sent for custom ones.
   if (process.env.WHATSAPP_TEMPLATE_NAME) {
     message.template.components = [
       { type: "body", parameters: [{ type: "text", text: text }, { type: "text", text: slotHint }] },
@@ -102,7 +118,7 @@ async function sendWhatsApp(to, text, slotHint) {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(message),
   });
-  return { ok: r.status >= 200 && r.status < 300, status: r.status, body: r.text.slice(0, 200) };
+  return { ok: r.status >= 200 && r.status < 300, via: "template", status: r.status, body: r.text.slice(0, 200) };
 }
 
 async function sarvamCall(to, spokenText) {
