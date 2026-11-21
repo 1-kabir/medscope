@@ -249,16 +249,75 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
     []
   );
 
-  // Voice input: "I took it" / "later"
+  // Voice input via Sarvam Saaras STT (through the sarvam-speech proxy):
+  // press the mic, speak, press again — the transcript decides taken vs later.
+  // Falls back to on-device Web Speech Recognition when the proxy is offline.
   const micRef = useRef<{ start: () => void; stop: () => void } | null>(null);
+
+  function heard(text: string, d: Dose) {
+    const t = text.toLowerCase();
+    if (/খেয়েছি|খেয়ে|निगल|took|take|ले लिया/.test(t)) void take(d);
+    else if (/পরে|later|बाद|defer/.test(t)) void defer(d);
+  }
+
   function toggleMic() {
-    const SR = (window as unknown as { SpeechRecognition?: new () => unknown; webkitSpeechRecognition?: new () => unknown }).SpeechRecognition
-      ?? (window as unknown as { webkitSpeechRecognition?: new () => unknown }).webkitSpeechRecognition;
-    if (!SR || !dose) return;
+    if (!dose) return;
     if (listening) {
       micRef.current?.stop();
       return;
     }
+    const md = (navigator as Navigator & { mediaDevices?: MediaDevices }).mediaDevices;
+    if (!md?.getUserMedia) { legacyMic(); return; }
+    setListening(true);
+    let recorder: MediaRecorder;
+    (async () => {
+      try {
+        const stream = await md.getUserMedia({ audio: true });
+        recorder = new MediaRecorder(stream);
+        const chunks: Blob[] = [];
+        recorder.ondataavailable = (e) => chunks.push(e.data);
+        const stop = () => {
+          if (recorder.state !== "inactive") recorder.stop();
+        };
+        micRef.current = { start: () => recorder.start(), stop };
+        // Auto-stop after 5s: one utterance is all the decision needs.
+        const autoStop = setTimeout(stop, 5000);
+        recorder.onstop = async () => {
+          clearTimeout(autoStop);
+          stream.getTracks().forEach((t) => t.stop());
+          setListening(false);
+          const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+          const audioBase64 = await new Promise<string>((resolve) => {
+            const r = new FileReader();
+            r.onload = () => resolve(String(r.result).split(",")[1] || "");
+            r.readAsDataURL(blob);
+          });
+          try {
+            const { functions, ExecutionMethod } = await import("../lib/appwrite");
+            const exec = await functions.createExecution({
+              functionId: "sarvam-speech",
+              method: ExecutionMethod.POST,
+              body: JSON.stringify({ action: "stt", audioBase64, mime: blob.type, lang }),
+            });
+            const outer = JSON.parse(exec.responseBody || "{}");
+            if (outer.transcript) heard(outer.transcript, dose);
+          } catch {
+            legacyMic(); // proxy offline: on-device recognition instead
+          }
+        };
+        recorder.start();
+      } catch {
+        setListening(false);
+        legacyMic();
+      }
+    })();
+  }
+
+  // On-device fallback: browser Speech Recognition, no network needed.
+  function legacyMic() {
+    const SR = (window as unknown as { SpeechRecognition?: new () => unknown; webkitSpeechRecognition?: new () => unknown }).SpeechRecognition
+      ?? (window as unknown as { webkitSpeechRecognition?: new () => unknown }).webkitSpeechRecognition;
+    if (!SR || !dose) return;
     const rec = new (SR as new () => {
       lang: string;
       interimResults: boolean;
@@ -270,11 +329,7 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
     })();
     rec.lang = lang === "bn" ? "bn-IN" : lang === "hi" ? "hi-IN" : "en-IN";
     rec.interimResults = false;
-    rec.onresult = (e) => {
-      const text = e.results[0][0].transcript.toLowerCase();
-      if (/খেয়েছি|খেয়ে|took|ले लिया/.test(text)) void take(dose);
-      else if (/পরে|later|बाद/.test(text)) void defer(dose);
-    };
+    rec.onresult = (e) => heard(e.results[0][0].transcript, dose);
     rec.onend = () => setListening(false);
     rec.onerror = () => setListening(false);
     micRef.current = rec;
