@@ -12,9 +12,9 @@ export default function LanguageScreen({
 }) {
   const speak = useSpeaker("en");
   return (
-    <main className="min-h-dvh flex flex-col px-6 py-10 max-w-md mx-auto">
+    <main className="anim-screen min-h-dvh flex flex-col px-6 py-10 max-w-md mx-auto">
       <h1 className="text-4xl font-bold mb-8">MedscopeOne</h1>
-      <div className="flex-1 flex flex-col gap-4">
+      <div className="flex-1 flex flex-col gap-4 stagger">
         {LANGUAGES.map((l) => (
           <button
             key={l.id}

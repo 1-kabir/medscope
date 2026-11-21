@@ -14,9 +14,9 @@ export default function ModeScreen({
     { id: "family" as const, label: t(lang, "familyMember") },
   ];
   return (
-    <main className="min-h-dvh flex flex-col px-6 py-10 max-w-md mx-auto">
+    <main className="anim-screen min-h-dvh flex flex-col px-6 py-10 max-w-md mx-auto">
       <h1 className="text-3xl font-bold mb-10">{t(lang, "whoUsesPhone")}</h1>
-      <div className="flex-1 flex flex-col gap-4">
+      <div className="flex-1 flex flex-col gap-4 stagger">
         {options.map((o) => (
           <div key={o.id} className="flex gap-3">
             <button

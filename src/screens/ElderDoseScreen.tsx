@@ -154,8 +154,8 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
   // Taken confirmation transient
   if (justTaken !== null) {
     return (
-      <main className="min-h-dvh flex flex-col items-center justify-center bg-[var(--color-accent-soft)] px-6 text-center" onClick={() => setJustTaken(null)}>
-        <svg width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <main className="anim-screen min-h-dvh flex flex-col items-center justify-center bg-[var(--color-accent-soft)] px-6 text-center" onClick={() => setJustTaken(null)}>
+        <svg className="check-pop check-draw" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <polyline points="20 6 9 17 4 12" />
         </svg>
         <p className="text-4xl font-bold mt-6 text-[var(--color-ink)]">{t(lang, "takenDone")}</p>
@@ -167,7 +167,7 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
   const firstContact = contacts[0];
 
   return (
-    <main className="min-h-dvh flex flex-col px-6 py-8 max-w-md mx-auto">
+    <main className="anim-screen min-h-dvh flex flex-col px-6 py-8 max-w-md mx-auto">
       {/* Always-on help: one tap calls family */}
       {firstContact && (
         <a

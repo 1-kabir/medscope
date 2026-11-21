@@ -23,7 +23,7 @@ export default function StockScreen({ lang, onBack }: { lang: Lang; onBack: () =
   }, []);
 
   return (
-    <div className="min-h-dvh px-6 py-8 max-w-md mx-auto pb-10">
+    <div className="anim-push min-h-dvh px-6 py-8 max-w-md mx-auto pb-10">
       <button onClick={onBack} className="text-lg font-semibold text-[var(--color-accent)] py-2 px-1">
         ← {lang === "en" ? "Back" : lang === "hi" ? "वापस" : "পেছনে"}
       </button>

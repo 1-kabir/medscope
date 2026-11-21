@@ -53,7 +53,7 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
   }
 
   return (
-    <div className="min-h-dvh flex flex-col px-6 py-8 max-w-md mx-auto">
+    <div className="anim-push min-h-dvh flex flex-col px-6 py-8 max-w-md mx-auto">
       <button onClick={() => (step === 0 ? onDone() : setStep((step - 1) as Step))} className="self-start text-lg font-semibold text-[var(--color-accent)] py-2 px-1">
         ← {lang === "en" ? "Back" : lang === "hi" ? "वापस" : "পেছনে"}
       </button>

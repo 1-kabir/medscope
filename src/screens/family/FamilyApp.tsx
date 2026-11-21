@@ -27,7 +27,7 @@ export default function FamilyApp({
 
   return (
     <div className="min-h-dvh max-w-md mx-auto relative">
-      <main className="pb-28">
+      <main key={`${tab}-${stack}`} className="anim-screen pb-28">
         {stack === "stock" ? (
           <StockScreen lang={lang} onBack={() => setStack(null)} />
         ) : tab === "medicines" ? (
