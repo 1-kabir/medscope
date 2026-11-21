@@ -19,6 +19,15 @@ const DB = "medscope";
 // enough that a permanently invalid number cannot buzz forever.
 const MAX_ATTEMPTS = Number(process.env.ESCALATION_MAX_ATTEMPTS || 6);
 
+// Escalation timing, all customizable:
+//   graceMinutes      — how late a dose may go before the family is texted
+//   callAfterMinutes  — when the elder's Sarvam voice call goes out
+//   secondWarnMinutes — when family gets the second warning if still untaken
+//                       (floored at 120: minimum 2 hours from the dose time)
+const GRACE_MINUTES = Number(process.env.ESCALATION_GRACE_MINUTES || 30);
+const CALL_AFTER_MINUTES = Number(process.env.ESCALATION_CALL_AFTER_MINUTES || 45);
+const SECOND_WARN_MINUTES = Math.max(120, Number(process.env.ESCALATION_SECOND_WARN_MINUTES || 120));
+
 const HEADERS = {
   "X-Appwrite-Project": PROJECT,
   "X-Appwrite-Key": API_KEY,
@@ -290,6 +299,9 @@ module.exports = async ({ req, res, log, error }) => {
       }
 
       const takenKeys = new Set(logs.filter((l) => l.status === "taken").map((l) => l.medicineId + "|" + l.slot));
+      // The elder's own phone number: the voice agent calls THEM, not family.
+      const elderNumbers = (hid) =>
+        [...new Set(allMembers.filter((m) => m.householdId === hid && m.role === "elder").map((m) => waNumber(m.phone)).filter(Boolean))];
 
       for (const med of medicines) {
         if (med.elderId && pausedMembers.has(med.elderId)) {
@@ -304,7 +316,7 @@ module.exports = async ({ req, res, log, error }) => {
         }
         for (const slot of times) {
           const overdue = now - minutesOf(slot);
-          if (overdue < 30) continue;
+          if (overdue < GRACE_MINUTES) continue;
           // A dose taken late stops the retries: the alert is no longer true.
           if (takenKeys.has(med.$id + "|" + slot)) continue;
 
@@ -342,10 +354,11 @@ module.exports = async ({ req, res, log, error }) => {
             });
           }
 
-          // No upper window: if a run was missed, the next run still calls.
-          if (overdue >= 60) {
-            for (const number of numbers) {
-              const spoken = `সাবধানবার্তা। ${med.nickname} খাওয়া হয়নি। অনুগ্রহ করে দেখুন।`;
+          // The elder's phone gets the call: the voice agent speaks, waits for
+          // a spoken confirmation, and reports the outcome.
+          if (overdue >= CALL_AFTER_MINUTES) {
+            const spoken = `সাবধানবার্তা। ${med.nickname} খাওয়া হয়নি। অনুগ্রহ করে ওষুধ খেয়ে নিন।`;
+            for (const number of elderNumbers(householdId)) {
               await deliver({
                 alertsById,
                 summary,
@@ -354,8 +367,29 @@ module.exports = async ({ req, res, log, error }) => {
                 number,
                 text: spoken,
                 hint: `${date} ${slot}`,
-                data: { elderId: med.elderId || "", medicineId: med.$id, message: `${med.nickname} ${slot} missed, 60 min -> ${number}`, householdId },
+                data: { elderId: med.elderId || "", medicineId: med.$id, message: `${med.nickname} ${slot} call elder -> ${number}`, householdId },
                 send: () => sarvamCall(number, spoken),
+                log,
+                error,
+              });
+            }
+          }
+
+          // Second family warning: at least 2 hours after the dose time, and
+          // only if the elder still hasn't confirmed on the app or by voice.
+          if (overdue >= SECOND_WARN_MINUTES) {
+            const again = `MedscopeOne: STILL not taken — ${med.nickname} (${med.name}), the ${slot} dose. It has been ${Math.floor(overdue / 60)}+ hours. Please check on them now.`;
+            for (const number of numbers) {
+              await deliver({
+                alertsById,
+                summary,
+                id: rowId("wa2", [med.$id, slot, date, number]),
+                channel: "whatsapp",
+                number,
+                text: again,
+                hint: `${date} ${slot}`,
+                data: { elderId: med.elderId || "", medicineId: med.$id, message: `${med.nickname} ${slot} STILL missed -> ${number}`, householdId },
+                send: () => sendWhatsApp(number, again, `${date} ${slot}`),
                 log,
                 error,
               });
