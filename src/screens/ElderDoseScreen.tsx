@@ -68,13 +68,17 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
     return { dose: next, state: s, remainingToday: remaining };
   }, [medicines, logs, deferringUntil]);
 
-  // Spoken reminder loop: when due, speak once per state entry
+  // Spoken reminder: speak on due entry, then re-speak every 3 min until answered
   useEffect(() => {
     if (state !== "due" || !dose) return;
     const key = dose.med.id + dose.slot;
     if (spokeFor.current === key) return;
     spokeFor.current = key;
     speak(`${t(lang, "timeFor")}: ${dose.med.nickname}`);
+    const repeat = setInterval(() => {
+      if (spokeFor.current === key) speak(`${t(lang, "timeFor")}: ${dose.med.nickname}`);
+    }, 3 * 60_000);
+    return () => clearInterval(repeat);
   }, [state, dose, lang, speak]);
 
   // Countdown tick while deferring
@@ -239,7 +243,19 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
       </div>
 
       <div className="flex-1 flex flex-col justify-center">
-        {state === "alldone" || !dose ? (
+        {medicines.length === 0 ? (
+          <div className="text-center">
+            <p className="text-3xl font-semibold leading-snug" onClick={() => speak(t(lang, "noMedicines"))}>
+              {t(lang, "noMedicines")}
+            </p>
+            <button
+              onClick={() => setConfirmingSetup(true)}
+              className="mt-8 w-full text-2xl font-bold py-6 rounded-2xl bg-[var(--color-accent)] text-white active:bg-[var(--color-accent-strong)]"
+            >
+              {t(lang, "addMedicine")}
+            </button>
+          </div>
+        ) : state === "alldone" || !dose ? (
           <p className="text-3xl font-semibold text-center leading-snug" onClick={() => speak(t(lang, "allDone"))}>
             {t(lang, "allDone")}
           </p>

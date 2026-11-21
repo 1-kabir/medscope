@@ -36,9 +36,28 @@ export default function MedicineDetail({ lang, id, onBack }: { lang: Lang; id: s
       <p className="text-xl mt-3">
         {med.times.map((s) => localizeNumber(s, lang)).join(" · ")}
       </p>
-      <p className="text-lg mt-1 text-[var(--color-ink-secondary)]">
-        {localizeNumber(med.tabletsLeft, lang)} · {t(lang, "stockTitle").toLowerCase()}
-      </p>
+      <div className="mt-6 px-5 py-4 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-line)]">
+        <div className="flex items-center justify-between">
+          <p className="text-base font-semibold text-[var(--color-ink-secondary)]">{t(lang, "stockTitle")}</p>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => { const u = { ...med, tabletsLeft: Math.max(0, med.tabletsLeft - 1), synced: false }; setMed(u); void saveMedicine(u); }}
+              className="w-12 h-12 rounded-xl bg-[var(--color-surface-muted)] text-2xl font-bold"
+              aria-label="minus"
+            >
+              −
+            </button>
+            <p className="text-3xl font-bold w-16 text-center">{localizeNumber(med.tabletsLeft, lang)}</p>
+            <button
+              onClick={() => { const u = { ...med, tabletsLeft: med.tabletsLeft + 1, synced: false }; setMed(u); void saveMedicine(u); }}
+              className="w-12 h-12 rounded-xl bg-[var(--color-surface-muted)] text-2xl font-bold"
+              aria-label="plus"
+            >
+              +
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* 7-day adherence strip */}
       <div className="mt-8">
