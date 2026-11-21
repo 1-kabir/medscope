@@ -1,4 +1,4 @@
-import { Client, Databases, Storage, Functions } from "appwrite";
+import { Client, Databases, Storage, Functions, Query } from "appwrite";
 
 export const APPWRITE_ENDPOINT =
   import.meta.env.VITE_APPWRITE_ENDPOINT ?? "https://appwrite.kabirstudios.com/v1";
@@ -11,6 +11,7 @@ export const client = new Client()
 export const databases = new Databases(client);
 export const storage = new Storage(client);
 export const functions = new Functions(client);
+export { Query };
 
 export const DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID ?? "medscope";
 

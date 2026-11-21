@@ -1,4 +1,4 @@
-import { databases, Collections, DATABASE_ID } from "./lib/appwrite";
+import { databases, Collections, DATABASE_ID, Query } from "./lib/appwrite";
 import type { Lang } from "./i18n";
 
 // Local-first: IndexedDB is the source of truth. Appwrite sync is best-effort,
@@ -39,6 +39,7 @@ export type Settings = {
   lang: Lang;
   mode: "elder" | "family" | null;
   deviceKey: string;
+  householdId: string | null;
 };
 
 const DB_NAME = "medscope";
@@ -163,11 +164,49 @@ export async function getSettings(): Promise<Settings> {
     deviceKey = crypto.randomUUID();
     await setSetting("deviceKey", deviceKey);
   }
-  const [lang, mode] = await Promise.all([
+  const [lang, mode, householdId] = await Promise.all([
     getSetting<Lang>("lang"),
     getSetting<Settings["mode"]>("mode"),
+    getSetting<string>("householdId"),
   ]);
-  return { deviceKey, lang: lang ?? "bn", mode: mode ?? null };
+  return { deviceKey, lang: lang ?? "bn", mode: mode ?? null, householdId: householdId ?? null };
+}
+
+// ---- Household linking ----
+// One 6-digit code per household. The elder's phone creates it; family phones
+// join by entering it. Every synced doc carries householdId, which is what
+// the escalation checker and other devices query.
+
+export function newHouseholdCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+export async function createHousehold(): Promise<string> {
+  const code = newHouseholdCode();
+  await setSetting("householdId", code);
+  return code;
+}
+
+export async function joinHousehold(code: string): Promise<boolean> {
+  if (!/^\d{6}$/.test(code)) return false;
+  // If the Appwrite database is reachable, verify the code exists by looking
+  // for any medicine doc from that household. If unreachable, trust the code
+  // (local-first: the family may set up before the elder's phone syncs).
+  try {
+    const res = await databases.listDocuments(DATABASE_ID, Collections.medicines, [
+      Query.equal("householdId", code),
+      Query.limit(1),
+    ]);
+    if (res.total === 0) return false;
+  } catch {
+    /* offline: accept and reconcile later */
+  }
+  await setSetting("householdId", code);
+  return true;
+}
+
+export async function leaveHousehold(): Promise<void> {
+  await setSetting("householdId", null);
 }
 
 // ---- Appwrite sync (queue, fire-and-forget) ----
@@ -214,7 +253,8 @@ async function drainSync(): Promise<void> {
   try {
     while (syncQueue.length > 0 && navigator.onLine) {
       const item = syncQueue[0];
-      const doc = { ...item.doc, deviceId: (await getSettings()).deviceKey };
+      const s = await getSettings();
+      const doc = { ...item.doc, deviceId: s.deviceKey, householdId: s.householdId };
       try {
         await databases.createDocument(DATABASE_ID, item.collection, item.id, doc);
         syncQueue.shift();

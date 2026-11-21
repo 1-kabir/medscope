@@ -76,6 +76,17 @@ const bn = {
   language: "ভাষা",
   phoneFor: "এই ফোন কার",
   editTimes: "সময় বদলান",
+  linkTitle: "পরিবারের সাথে যুক্ত হন",
+  linkBody: "বয়স্ক ব্যক্তির ফোনে একটি ৬ অঙ্কের কোড দেখা যাবে (সেটআপ বোতামে)। সেই কোড এখানে লিখুন।",
+  joinHousehold: "কোড দিয়ে যুক্ত হন",
+  enterCode: "৬ অঙ্কের কোড",
+  invalidCode: "কোড মেলেনি। আবার দেখুন।",
+  linkBtn: "যুক্ত করুন",
+  createHousehold: "নতুন পরিবার শুরু করুন",
+  createHouseholdBody: "বয়স্ক ব্যক্তির ফোন এখানেই সেট করলে এটি বেছে নিন।",
+  createHouseholdBtn: "নতুন কোড বানান",
+  yourCode: "পরিবারের কোড",
+  yourCodeBody: "এই নম্বরটি পরিবারের ফোনে লিখে দিন।",
 };
 
 const hi: typeof bn = {
@@ -144,6 +155,17 @@ const hi: typeof bn = {
   language: "भाषा",
   phoneFor: "यह फ़ोन किसके लिए",
   editTimes: "समय बदलें",
+  linkTitle: "परिवार से जुड़ें",
+  linkBody: "बुज़ुर्ग के फ़ोन पर ६ अंकों का कोड दिखता है (सेटअप बटन में)। वही कोड यहाँ लिखें।",
+  joinHousehold: "कोड से जुड़ें",
+  enterCode: "६ अंकों का कोड",
+  invalidCode: "कोड नहीं मिला। फिर जाँचें।",
+  linkBtn: "जोड़ें",
+  createHousehold: "नया परिवार शुरू करें",
+  createHouseholdBody: "बुज़ुर्ग का फ़ोन यहीं सेट कर रहे हैं तो यह चुनें।",
+  createHouseholdBtn: "नया कोड बनाएँ",
+  yourCode: "परिवार कोड",
+  yourCodeBody: "यह नंबर परिवार के फ़ोन में डालें।",
 };
 
 const en: typeof bn = {
@@ -212,6 +234,17 @@ const en: typeof bn = {
   language: "Language",
   phoneFor: "This phone is for",
   editTimes: "Edit times",
+  linkTitle: "Link with the elder",
+  linkBody: "The elder's phone shows a 6-digit code (under the setup gear). Enter it here.",
+  joinHousehold: "Join with a code",
+  enterCode: "6-digit code",
+  invalidCode: "Code not found. Check and try again.",
+  linkBtn: "Link",
+  createHousehold: "Start a new household",
+  createHouseholdBody: "Choose this if you are setting up the elder's phone here.",
+  createHouseholdBtn: "Create a code",
+  yourCode: "Family code",
+  yourCodeBody: "Enter this number on the family member's phone.",
 };
 
 const dicts: Record<Lang, typeof bn> = { bn, hi, en };

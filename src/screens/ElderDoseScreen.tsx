@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listMedicines, logDose, listContacts, logsByDate, setSetting, type Medicine, type DoseLog } from "../db";
+import { listMedicines, logDose, listContacts, logsByDate, setSetting, getSettings, type Medicine, type DoseLog } from "../db";
 import { t, localizeNumber, type Lang } from "../i18n";
 import { stopSpeaking, SpeakerIcon, useSpeaker } from "../speech";
 
@@ -27,6 +27,11 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
   const [justTaken, setJustTaken] = useState<number | null>(null);
   const [listening, setListening] = useState(false);
   const [confirmingSetup, setConfirmingSetup] = useState(false);
+  const [householdCode, setHouseholdCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    void getSettings().then((s) => setHouseholdCode(s.householdId));
+  }, []);
   const spokeFor = useRef<string | null>(null);
   const speak = useSpeaker(lang);
 
@@ -171,6 +176,13 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
       <main className="anim-screen min-h-dvh flex flex-col items-center justify-center px-6 text-center max-w-md mx-auto" role="dialog" aria-modal="true" aria-label={t(lang, "phoneFor")}>
         <p className="text-2xl font-semibold leading-snug">{t(lang, "phoneFor")} — {t(lang, "myself")}?</p>
         <p className="text-lg text-[var(--color-ink-secondary)] mt-3">{lang === "en" ? "Switch to family setup to add medicines and contacts." : lang === "hi" ? "दवाएँ और संपर्क जोड़ने के लिए परिवार सेटअप पर जाएँ।" : "ওষুধ ও পরিবারের তথ্য যোগ করতে পরিবারের সেটআপে যান।"}</p>
+        {householdCode && (
+          <div className="mt-6 px-8 py-5 rounded-2xl bg-[var(--color-surface-muted)]">
+            <p className="text-base font-semibold text-[var(--color-ink-secondary)]">{t(lang, "yourCode")}</p>
+            <p className="text-4xl font-bold tracking-[0.25em] mt-1">{localizeNumber(householdCode, lang)}</p>
+            <p className="text-sm text-[var(--color-ink-tertiary)] mt-2">{t(lang, "yourCodeBody")}</p>
+          </div>
+        )}
         <div className="flex flex-col gap-3 w-full mt-8">
           <button
             onClick={() => { void setSetting("mode", null).then(() => window.location.reload()); }}
