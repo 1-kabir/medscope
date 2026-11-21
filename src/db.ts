@@ -143,6 +143,28 @@ export async function logDose(l: DoseLog): Promise<void> {
   queueSync(Collections.takenLogs, l.id, logToDoc(l));
 }
 
+// Undo a taken log: remove the local log and restore the tablet.
+export async function undoDose(logId: string): Promise<void> {
+  const db = await open();
+  const store = db.transaction("taken", "readwrite").objectStore("taken");
+  const log = (await reqAs(store.get(logId))) as DoseLog | undefined;
+  if (!log) return;
+  await reqAs(store.delete(logId));
+  if (log.status === "taken") {
+    const medicines = await listMedicines();
+    const med = medicines.find((m) => m.id === log.medicineId);
+    if (med) {
+      med.tabletsLeft += 1;
+      med.synced = false;
+      await saveMedicine(med);
+    }
+    // Deleting a synced row requires server-side delete; mark it superseded instead.
+    if (log.synced) {
+      await logDose({ ...log, id: crypto.randomUUID(), status: "missed", at: Date.now(), synced: false });
+    }
+  }
+}
+
 export async function logsByDate(date: string): Promise<DoseLog[]> {
   const db = await open();
   const idx = db.transaction("taken", "readonly").objectStore("taken").index("by_date");

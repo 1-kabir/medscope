@@ -75,7 +75,7 @@ export default function App() {
     );
   }
 
-  if (view === "elder") return <ElderDoseScreen lang={lang} />;
+  if (view === "elder") return <ElderDoseScreen lang={lang} onLangChange={(l) => { setLang(l); void setSetting("lang", l); }} />;
 
   return <FamilyApp lang={lang} onLangChange={(l) => { setLang(l); void setSetting("lang", l); }} />;
 }

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listMedicines, logDose, listContacts, logsByDate, setSetting, getSettings, type Medicine, type DoseLog } from "../db";
-import { t, localizeNumber, type Lang } from "../i18n";
+import { listMedicines, logDose, undoDose, listContacts, logsByDate, setSetting, getSettings, type Medicine, type DoseLog } from "../db";
+import { t, localizeNumber, LANGUAGES, type Lang } from "../i18n";
 import { stopSpeaking, SpeakerIcon, useSpeaker } from "../speech";
 import AddMedicineFlow from "./family/AddMedicineFlow";
+import ElderContactsScreen from "./ElderContactsScreen";
 
 type Dose = { med: Medicine; slot: string };
 
@@ -20,15 +21,16 @@ function nowMinutes(): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-export default function ElderDoseScreen({ lang }: { lang: Lang }) {
+export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; onLangChange: (l: Lang) => void }) {
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [logs, setLogs] = useState<DoseLog[]>([]);
   const [contacts, setContacts] = useState<{ id: string; name: string; whatsapp: string }[]>([]);
   const [deferringUntil, setDeferringUntil] = useState<number | null>(null);
-  const [justTaken, setJustTaken] = useState<number | null>(null);
+  const [justTaken, setJustTaken] = useState<{ logId: string; remaining: number } | null>(null);
   const [listening, setListening] = useState(false);
   const [confirmingSetup, setConfirmingSetup] = useState(false);
   const [addingMedicine, setAddingMedicine] = useState(false);
+  const [managingContacts, setManagingContacts] = useState(false);
   const [householdCode, setHouseholdCode] = useState<string | null>(null);
 
   useEffect(() => {
@@ -68,17 +70,41 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
     return { dose: next, state: s, remainingToday: remaining };
   }, [medicines, logs, deferringUntil]);
 
-  // Spoken reminder: speak on due entry, then re-speak every 3 min until answered
+  // Spoken reminder: speak on due entry, then re-speak every 3 min until answered.
+  // Also schedules a Web Notification per due dose (fires even when the screen
+  // is off or the browser is backgrounded) and holds a WakeLock while the
+  // dose screen is on, so the phone does not sleep mid-reminder.
   useEffect(() => {
     if (state !== "due" || !dose) return;
     const key = dose.med.id + dose.slot;
     if (spokeFor.current === key) return;
     spokeFor.current = key;
-    speak(`${t(lang, "timeFor")}: ${dose.med.nickname}`);
+    const line = `${t(lang, "timeFor")}: ${dose.med.nickname}`;
+    speak(line);
     const repeat = setInterval(() => {
-      if (spokeFor.current === key) speak(`${t(lang, "timeFor")}: ${dose.med.nickname}`);
+      if (spokeFor.current === key) speak(line);
     }, 3 * 60_000);
-    return () => clearInterval(repeat);
+
+    if ("Notification" in window && Notification.permission === "granted") {
+      void Notification.requestPermission; // permission asked in setup screen
+      try {
+        const n = new Notification(line, { tag: key, requireInteraction: true });
+        n.onclick = () => window.focus();
+      } catch {
+        /* notification construction can throw in some webviews */
+      }
+    }
+
+    let wakeLock: { release: () => Promise<void> } | null = null;
+    const nav = navigator as Navigator & { wakeLock?: { request: (t: string) => Promise<{ release: () => Promise<void> }> } };
+    if (nav.wakeLock?.request) {
+      nav.wakeLock.request("screen").then((wl) => (wakeLock = wl)).catch(() => {});
+    }
+
+    return () => {
+      clearInterval(repeat);
+      wakeLock?.release().catch(() => {});
+    };
   }, [state, dose, lang, speak]);
 
   // Countdown tick while deferring
@@ -92,8 +118,9 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
   const take = useCallback(
     async (d: Dose) => {
       stopSpeaking();
+      const logId = crypto.randomUUID();
       await logDose({
-        id: crypto.randomUUID(),
+        id: logId,
         medicineId: d.med.id,
         nickname: d.med.nickname,
         slot: d.slot,
@@ -104,9 +131,8 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
       });
       spokeFor.current = null;
       setDeferringUntil(null);
-      setJustTaken(remainingToday - 1);
+      setJustTaken({ logId, remaining: remainingToday - 1 });
       await refresh();
-      setTimeout(() => setJustTaken(null), 3000);
     },
     [remainingToday, lang, speak]
   );
@@ -163,15 +189,29 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
     rec.start();
   }
 
-  // Taken confirmation transient
+  // Taken confirmation with 5-min undo window
   if (justTaken !== null) {
     return (
-      <main className="anim-screen min-h-dvh flex flex-col items-center justify-center bg-[var(--color-accent-soft)] px-6 text-center" onClick={() => setJustTaken(null)}>
+      <main className="anim-screen min-h-dvh flex flex-col items-center justify-center bg-[var(--color-accent-soft)] px-6 text-center">
         <svg className="check-pop check-draw" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <polyline points="20 6 9 17 4 12" />
         </svg>
         <p className="text-4xl font-bold mt-6 text-[var(--color-ink)]">{t(lang, "takenDone")}</p>
-        {justTaken > 0 && <p className="text-2xl mt-2 text-[var(--color-ink-secondary)]">{t(lang, "remainingToday", { n: localizeNumber(justTaken, lang) })}</p>}
+        {justTaken.remaining > 0 && <p className="text-2xl mt-2 text-[var(--color-ink-secondary)]">{t(lang, "remainingToday", { n: localizeNumber(justTaken.remaining, lang) })}</p>}
+        <div className="flex gap-3 w-full max-w-md mt-10">
+          <button
+            onClick={() => { void undoDose(justTaken.logId).then(() => { setJustTaken(null); void refresh(); }); }}
+            className="flex-1 text-xl font-bold py-5 rounded-2xl bg-[var(--color-surface)] border-2 border-[var(--color-line)]"
+          >
+            {t(lang, "undo")}
+          </button>
+          <button
+            onClick={() => setJustTaken(null)}
+            className="flex-1 text-xl font-bold py-5 rounded-2xl bg-[var(--color-accent)] text-white active:bg-[var(--color-accent-strong)]"
+          >
+            {t(lang, "done")}
+          </button>
+        </div>
       </main>
     );
   }
@@ -179,6 +219,10 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
   // Setup screen: the elder's own control center — add medicines, see the family code, switch modes
   if (confirmingSetup && addingMedicine) {
     return <AddMedicineFlow lang={lang} onDone={() => { setAddingMedicine(false); void refresh(); }} />;
+  }
+
+  if (confirmingSetup && managingContacts) {
+    return <ElderContactsScreen lang={lang} onBack={() => { setManagingContacts(false); void refresh(); }} />;
   }
 
   if (confirmingSetup) {
@@ -201,6 +245,12 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
             {t(lang, "addMedicine")}
           </button>
           <button
+            onClick={() => setManagingContacts(true)}
+            className="w-full text-xl font-bold py-5 rounded-2xl bg-[var(--color-surface-muted)]"
+          >
+            {t(lang, "help")} ({localizeNumber(contacts.length, lang)})
+          </button>
+          <button
             onClick={() => { void setSetting("mode", null).then(() => window.location.reload()); }}
             className="w-full text-xl font-bold py-5 rounded-2xl bg-[var(--color-surface-muted)]"
           >
@@ -209,6 +259,26 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
           <button onClick={() => setConfirmingSetup(false)} className="w-full text-xl font-bold py-5 rounded-2xl bg-[var(--color-surface-muted)]">
             {t(lang, "cancel")}
           </button>
+        </div>
+        {"Notification" in window && Notification.permission === "default" && (
+          <button
+            onClick={() => void Notification.requestPermission()}
+            className="mt-4 w-full text-lg font-semibold py-4 rounded-2xl border-2 border-dashed border-[var(--color-line)] text-[var(--color-accent)]"
+          >
+            {lang === "en" ? "Allow dose notifications" : lang === "hi" ? "डोज़ सूचना चालू करें" : "ডোজের নোটিফিকেশন চালু করুন"}
+          </button>
+        )}
+        <div className="mt-6 flex justify-center gap-3">
+          {LANGUAGES.map((l) => (
+            <button
+              key={l.id}
+              onClick={() => { onLangChange(l.id); }}
+              aria-pressed={lang === l.id}
+              className={`text-lg px-4 py-3 rounded-xl border-2 font-semibold ${lang === l.id ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-line)]"}`}
+            >
+              {l.label}
+            </button>
+          ))}
         </div>
       </main>
     );
@@ -239,7 +309,14 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
           </svg>
           {t(lang, "help")}
         </a>
-        ) : <span />}
+        ) : (
+        <button
+          onClick={() => setConfirmingSetup(true)}
+          className="self-end flex items-center gap-2 px-4 py-3 rounded-full bg-[var(--color-alert-soft)] text-[var(--color-alert)] font-bold text-lg"
+        >
+          {t(lang, "help")} +
+        </button>
+        )}
       </div>
 
       <div className="flex-1 flex flex-col justify-center">
