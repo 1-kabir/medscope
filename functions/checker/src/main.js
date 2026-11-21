@@ -241,19 +241,19 @@ module.exports = async ({ req, res, log, error }) => {
   const now = nowMinutes();
 
   try {
-    const [devices, allMedicines, allContacts, todayLogs] = await Promise.all([
-      listRows("devices", [{ method: "limit", values: [500] }]).catch(() => []),
+    // Members are the single people directory: elders own medicines (and can
+    // be paused), family members are the escalation targets. The contacts and
+    // devices tables are legacy and no longer read here.
+    const [allMembers, allMedicines, todayLogs] = await Promise.all([
+      listRows("members", [{ method: "limit", values: [500] }]),
       listRows("medicines", [{ method: "limit", values: [500] }]),
-      listRows("contacts", [{ method: "limit", values: [500] }]),
       listRows("taken_logs", [{ method: "equal", attribute: "date", values: [date] }, { method: "limit", values: [1000] }]).catch(() => []),
     ]);
 
-    // A household is whoever is actually in the data. Requiring a `devices`
-    // row meant an elder who never re-ran setup — or a family phone that only
-    // joined by code — was silently never checked, so nobody was texted.
+    // A household is whoever is actually in the data.
     const households = [
       ...new Set(
-        [...devices.map((d) => d.householdId), ...allMedicines.map((m) => m.householdId), ...allContacts.map((c) => c.householdId)]
+        [...allMembers.map((m) => m.householdId), ...allMedicines.map((m) => m.householdId)]
           .filter(Boolean)
       ),
     ];
@@ -262,16 +262,23 @@ module.exports = async ({ req, res, log, error }) => {
 
     // A paused elder is away (wedding, hospital) — no missed log, no message,
     // no call. The app already hides reminders; escalation has to match it.
-    // Absent attribute means not paused, so older device rows still work.
-    const pausedElders = new Set(devices.filter((d) => Number(d.pauseUntil || 0) > Date.now()).map((d) => d.$id));
-    log("paused devices: " + pausedElders.size);
+    // pauseUntil lives on the elder's member row.
+    const pausedMembers = new Set(allMembers.filter((m) => Number(m.pauseUntil || 0) > Date.now()).map((m) => m.$id));
+    log("paused members: " + pausedMembers.size);
 
     for (const householdId of households) {
       const medicines = allMedicines.filter((m) => m.householdId === householdId);
       const logs = todayLogs.filter((l) => l.householdId === householdId);
-      // Every family contact, not just the first one: someone may be asleep,
+      // Every family member with a number, not just one: someone may be asleep,
       // abroad, or simply not the person who can go check.
-      const numbers = [...new Set(allContacts.filter((c) => c.householdId === householdId).map((c) => waNumber(c.whatsapp)).filter(Boolean))];
+      const numbers = [
+        ...new Set(
+          allMembers
+            .filter((m) => m.householdId === householdId && m.role === "family")
+            .map((m) => waNumber(m.phone))
+            .filter(Boolean)
+        ),
+      ];
       summary.checked += medicines.length;
 
       const alerts = await listRows("alerts", [{ method: "equal", attribute: "householdId", values: [householdId] }, { method: "limit", values: [1000] }]).catch(() => []);
@@ -285,7 +292,7 @@ module.exports = async ({ req, res, log, error }) => {
       const takenKeys = new Set(logs.filter((l) => l.status === "taken").map((l) => l.medicineId + "|" + l.slot));
 
       for (const med of medicines) {
-        if (med.elderId && pausedElders.has(med.elderId)) {
+        if (med.elderId && pausedMembers.has(med.elderId)) {
           summary.paused++;
           continue;
         }

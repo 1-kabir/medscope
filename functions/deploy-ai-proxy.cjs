@@ -49,7 +49,7 @@ function api(method, urlPath, body) {
   const fnDir = path.join(__dirname, "ai-proxy");
   // --force-local keeps GNU tar from reading the Windows drive letter (C:) as
   // a remote host and failing with "Cannot connect to C".
-  execSync(`tar --force-local -czf "${tgzPath}" -C "${fnDir}" src package.json`, { timeout: 120000, shell: true });
+  execSync(`tar -czf "${tgzPath}" -C "${fnDir}" src package.json`, { timeout: 120000, shell: true });
 
   const up = `-H "X-Appwrite-Project: medscope" -H "X-Appwrite-Key: ${key}"`;
   const deployOut = execSync(

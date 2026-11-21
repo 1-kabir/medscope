@@ -35,7 +35,7 @@ function api(method, urlPath, body) {
   const fnDir = path.join(__dirname, "checker");
   // --force-local: GNU tar otherwise reads the Windows drive letter (C:) as a
   // remote host and fails, so the checker would keep its old code.
-  execSync(`tar --force-local -czf "${tgz}" -C "${fnDir}" src package.json`, { timeout: 120000, shell: true });
+  execSync(`tar -czf "${tgz}" -C "${fnDir}" src package.json`, { timeout: 120000, shell: true });
   const up = `-H "X-Appwrite-Project: medscope" -H "X-Appwrite-Key: ${key}"`;
   const out = execSync(`curl -s -X POST "${BASE}/functions/checker/deployments" ${up} -F "entrypoint=src/main.js" -F "activate=true" -F "code=@${tgz.replace(/\\/g, "/")};type=application/gzip"`, { encoding: "utf8", timeout: 300000 });
   const d = JSON.parse(out);
