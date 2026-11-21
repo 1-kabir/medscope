@@ -32,3 +32,6 @@ Thumbs.db
 
 # Appwrite CLI
 .appwrite/
+
+# Local UI screenshots
+ui-*.png
