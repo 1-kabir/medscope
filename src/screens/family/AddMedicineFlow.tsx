@@ -3,6 +3,7 @@ import Tesseract from "tesseract.js";
 import { saveMedicine, type Medicine } from "../../db";
 import { t, localizeNumber, type Lang } from "../../i18n";
 import { useSpeaker, SpeakerIcon } from "../../speech";
+import { aiConfigured, readMedicineImage, type MedicineReading } from "../../lib/prescription";
 
 type Step = 0 | 1 | 2 | 3; // photo | reading | confirm | stock
 
@@ -17,8 +18,31 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
   const [times, setTimes] = useState<string[]>([DEFAULT_SLOTS[0]]);
   const [tablets, setTablets] = useState(30);
   const [dosePerSlot, setDosePerSlot] = useState(1);
+  const [aiName, setAiName] = useState(false);
   const speak = useSpeaker(lang);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function applyReading(r: MedicineReading) {
+    setNickname((prev) => prev || r.nickname || "");
+    setName((prev) => prev || r.name || "");
+    setStrength((prev) => prev || r.strength || "");
+    if (r.times?.length) setTimes(r.times);
+    if ([0.25, 0.5, 1, 2].includes(r.dosePerSlot)) setDosePerSlot(r.dosePerSlot);
+    if (typeof r.tabletsInStrip === "number") setTablets(r.tabletsInStrip);
+    setAiName(true);
+    setStep(2);
+  }
+
+  async function runAI(file: File) {
+    setStep(1);
+    try {
+      const reading = await readMedicineImage(file, lang);
+      applyReading(reading);
+    } catch {
+      // AI unavailable/failed — fall back to on-device OCR
+      await runOCR(file);
+    }
+  }
 
   async function runOCR(file: File) {
     setStep(1);
@@ -84,7 +108,7 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) void runOCR(f);
+              if (f) void (aiConfigured ? runAI(f) : runOCR(f));
             }}
           />
         </div>
@@ -105,6 +129,11 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
               <summary className="cursor-pointer">{t(lang, "readText")}</summary>
               <p className="whitespace-pre-wrap mt-2">{ocrText}</p>
             </details>
+          )}
+          {aiName && (
+            <p className="text-sm font-semibold text-[var(--color-accent)]">
+              {lang === "en" ? "Auto-filled from the photo. Check every field." : lang === "hi" ? "फोटो से भरा गया। हर जानकारी जाँचें।" : "ছবি থেকে ভরা হয়েছে। সব তথ্য দেখে নিন।"}
+            </p>
           )}
           {[
             { label: t(lang, "nickname"), value: nickname, set: setNickname, placeholder: t(lang, "nicknamePh") },
