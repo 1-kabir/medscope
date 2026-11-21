@@ -1,9 +1,34 @@
-node_modules
-dist
-.vercel
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Environment — never commit secrets
 .env
 .env.local
-*.local
+.env.*.local
+
+# Command Code local state
+.commandcode/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
 .DS_Store
-.commandcode
-tsconfig.tsbuildinfo
+Thumbs.db
+
+# Vercel
+.vercel/
+
+# Appwrite CLI
+.appwrite/
