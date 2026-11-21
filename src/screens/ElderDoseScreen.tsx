@@ -4,6 +4,7 @@ import { t, localizeNumber, LANGUAGES, type Lang } from "../i18n";
 import { stopSpeaking, useSpeaker } from "../speech";
 import AddMedicineFlow from "./family/AddMedicineFlow";
 import MembersScreen from "./family/MembersScreen";
+import { scheduleDoseAlarms } from "../lib/alarms";
 
 type Dose = { med: Medicine; slot: string };
 
@@ -101,6 +102,13 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
       .then(setContacts)
       .catch(() => void listContacts().then(setContacts));
   }, []);
+
+  // Native dose alarms: re-derived from the current schedule on every open and
+  // after every log change, so a taken dose never buzzes later.
+  useEffect(() => {
+    if (!medicines.length) return;
+    void scheduleDoseAlarms(medicines);
+  }, [medicines]);
 
   async function refresh() {
     const s = await getSettings();
