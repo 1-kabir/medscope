@@ -29,7 +29,7 @@ function api(method, urlPath, body) {
   }
 
   // Real image → data URL
-  const imgPath = path.join(root, "ui-fonts.png");
+  const imgPath = path.join(root, "scratchpad-tmp", "strip.jpg");
   const b64 = fs.readFileSync(imgPath).toString("base64");
   const payload = { imageDataUrl: `data:image/png;base64,${b64}`, lang: "en" };
 
