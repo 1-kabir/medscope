@@ -1,4 +1,4 @@
-import { Client, Databases, Storage, Functions, Query } from "appwrite";
+import { Client, TablesDB, Storage, Functions, Query } from "appwrite";
 
 export const APPWRITE_ENDPOINT =
   import.meta.env.VITE_APPWRITE_ENDPOINT ?? "https://appwrite.kabirstudios.com/v1";
@@ -8,7 +8,7 @@ export const client = new Client()
   .setEndpoint(APPWRITE_ENDPOINT)
   .setProject(APPWRITE_PROJECT);
 
-export const databases = new Databases(client);
+export const tablesDB = new TablesDB(client);
 export const storage = new Storage(client);
 export const functions = new Functions(client);
 export { Query };

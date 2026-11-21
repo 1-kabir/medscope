@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listMedicines, logDose, listContacts, logsByDate, setSetting, getSettings, type Medicine, type DoseLog } from "../db";
 import { t, localizeNumber, type Lang } from "../i18n";
 import { stopSpeaking, SpeakerIcon, useSpeaker } from "../speech";
+import AddMedicineFlow from "./family/AddMedicineFlow";
 
 type Dose = { med: Medicine; slot: string };
 
@@ -27,6 +28,7 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
   const [justTaken, setJustTaken] = useState<number | null>(null);
   const [listening, setListening] = useState(false);
   const [confirmingSetup, setConfirmingSetup] = useState(false);
+  const [addingMedicine, setAddingMedicine] = useState(false);
   const [householdCode, setHouseholdCode] = useState<string | null>(null);
 
   useEffect(() => {
@@ -170,7 +172,11 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
     );
   }
 
-  // Setup switch confirmation — the elder's only way out, guarded by a confirm
+  // Setup screen: the elder's own control center — add medicines, see the family code, switch modes
+  if (confirmingSetup && addingMedicine) {
+    return <AddMedicineFlow lang={lang} onDone={() => { setAddingMedicine(false); void refresh(); }} />;
+  }
+
   if (confirmingSetup) {
     return (
       <main className="anim-screen min-h-dvh flex flex-col items-center justify-center px-6 text-center max-w-md mx-auto" role="dialog" aria-modal="true" aria-label={t(lang, "phoneFor")}>
@@ -185,8 +191,14 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
         )}
         <div className="flex flex-col gap-3 w-full mt-8">
           <button
-            onClick={() => { void setSetting("mode", null).then(() => window.location.reload()); }}
+            onClick={() => setAddingMedicine(true)}
             className="w-full text-xl font-bold py-5 rounded-2xl bg-[var(--color-accent)] text-white active:bg-[var(--color-accent-strong)]"
+          >
+            {t(lang, "addMedicine")}
+          </button>
+          <button
+            onClick={() => { void setSetting("mode", null).then(() => window.location.reload()); }}
+            className="w-full text-xl font-bold py-5 rounded-2xl bg-[var(--color-surface-muted)]"
           >
             {lang === "en" ? "Switch to family setup" : lang === "hi" ? "परिवार सेटअप खोलें" : "পরিবারের সেটআপ খুলুন"}
           </button>

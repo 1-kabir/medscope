@@ -1,4 +1,4 @@
-import { databases, Collections, DATABASE_ID, Query } from "./lib/appwrite";
+import { tablesDB, Collections, DATABASE_ID, Query } from "./lib/appwrite";
 import type { Lang } from "./i18n";
 
 // Local-first: IndexedDB is the source of truth. Appwrite sync is best-effort,
@@ -213,10 +213,11 @@ export async function joinHousehold(code: string): Promise<boolean> {
   // for any medicine doc from that household. If unreachable, trust the code
   // (local-first: the family may set up before the elder's phone syncs).
   try {
-    const res = await databases.listDocuments(DATABASE_ID, Collections.medicines, [
-      Query.equal("householdId", code),
-      Query.limit(1),
-    ]);
+    const res = await tablesDB.listRows({
+      databaseId: DATABASE_ID,
+      tableId: Collections.medicines,
+      queries: [Query.equal("householdId", code), Query.limit(1)],
+    });
     if (res.total === 0) return false;
   } catch {
     /* offline: accept and reconcile later */
@@ -308,12 +309,12 @@ export async function pullHousehold(): Promise<void> {
   if (!s.householdId || !navigator.onLine) return;
   try {
     const [medRes, logRes, devRes] = await Promise.all([
-      databases.listDocuments(DATABASE_ID, Collections.medicines, [Query.equal("householdId", s.householdId), Query.limit(100)]),
-      databases.listDocuments(DATABASE_ID, Collections.takenLogs, [Query.equal("householdId", s.householdId), Query.limit(100)]),
-      databases.listDocuments(DATABASE_ID, Collections.devices, [Query.equal("householdId", s.householdId), Query.limit(100)]),
+      tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.medicines, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
+      tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.takenLogs, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
+      tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.devices, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
     ]);
 
-    for (const d of medRes.documents as unknown as Record<string, unknown>[]) {
+    for (const d of medRes.rows as unknown as Record<string, unknown>[]) {
       const m: Medicine = {
         id: String(d.$id),
         elderId: String(d.elderId ?? ""),
@@ -329,7 +330,7 @@ export async function pullHousehold(): Promise<void> {
       await put("medicines", m);
     }
 
-    for (const d of logRes.documents as unknown as Record<string, unknown>[]) {
+    for (const d of logRes.rows as unknown as Record<string, unknown>[]) {
       const l: DoseLog = {
         id: String(d.$id),
         medicineId: String(d.medicineId ?? ""),
@@ -344,7 +345,7 @@ export async function pullHousehold(): Promise<void> {
       await put("taken", l);
     }
 
-    for (const d of devRes.documents as unknown as Record<string, unknown>[]) {
+    for (const d of devRes.rows as unknown as Record<string, unknown>[]) {
       const info: DeviceInfo = {
         id: String(d.$id),
         householdId: String(d.householdId ?? s.householdId),
@@ -367,15 +368,15 @@ async function drainSync(): Promise<void> {
       const s = await getSettings();
       const doc = { ...item.doc, deviceId: s.deviceKey, householdId: s.householdId };
       try {
-        await databases.createDocument(DATABASE_ID, item.collection, item.id, doc);
+        await tablesDB.createRow({ databaseId: DATABASE_ID, tableId: item.collection, rowId: item.id, data: doc });
         syncQueue.shift();
       } catch {
-        // Document probably exists (a local update, e.g. stock change): upsert.
+        // Row probably exists (a local update, e.g. stock change): upsert.
         try {
-          await databases.updateDocument(DATABASE_ID, item.collection, item.id, doc);
+          await tablesDB.updateRow({ databaseId: DATABASE_ID, tableId: item.collection, rowId: item.id, data: doc });
           syncQueue.shift();
         } catch {
-          break; // offline or collection not ready — retry later
+          break; // offline or table not ready — retry later
         }
       }
     }
