@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listMedicines, logDose, listContacts, logsByDate, type Medicine, type DoseLog } from "../db";
+import { listMedicines, logDose, listContacts, logsByDate, setSetting, type Medicine, type DoseLog } from "../db";
 import { t, localizeNumber, type Lang } from "../i18n";
 import { stopSpeaking, SpeakerIcon, useSpeaker } from "../speech";
 
@@ -26,6 +26,7 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
   const [deferringUntil, setDeferringUntil] = useState<number | null>(null);
   const [justTaken, setJustTaken] = useState<number | null>(null);
   const [listening, setListening] = useState(false);
+  const [confirmingSetup, setConfirmingSetup] = useState(false);
   const spokeFor = useRef<string | null>(null);
   const speak = useSpeaker(lang);
 
@@ -164,12 +165,43 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
     );
   }
 
+  // Setup switch confirmation — the elder's only way out, guarded by a confirm
+  if (confirmingSetup) {
+    return (
+      <main className="anim-screen min-h-dvh flex flex-col items-center justify-center px-6 text-center max-w-md mx-auto" role="dialog" aria-modal="true" aria-label={t(lang, "phoneFor")}>
+        <p className="text-2xl font-semibold leading-snug">{t(lang, "phoneFor")} — {t(lang, "myself")}?</p>
+        <p className="text-lg text-[var(--color-ink-secondary)] mt-3">{lang === "en" ? "Switch to family setup to add medicines and contacts." : lang === "hi" ? "दवाएँ और संपर्क जोड़ने के लिए परिवार सेटअप पर जाएँ।" : "ওষুধ ও পরিবারের তথ্য যোগ করতে পরিবারের সেটআপে যান।"}</p>
+        <div className="flex flex-col gap-3 w-full mt-8">
+          <button
+            onClick={() => { void setSetting("mode", null).then(() => window.location.reload()); }}
+            className="w-full text-xl font-bold py-5 rounded-2xl bg-[var(--color-accent)] text-white active:bg-[var(--color-accent-strong)]"
+          >
+            {lang === "en" ? "Switch to family setup" : lang === "hi" ? "परिवार सेटअप खोलें" : "পরিবারের সেটআপ খুলুন"}
+          </button>
+          <button onClick={() => setConfirmingSetup(false)} className="w-full text-xl font-bold py-5 rounded-2xl bg-[var(--color-surface-muted)]">
+            {t(lang, "cancel")}
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   const firstContact = contacts[0];
 
   return (
     <main className="anim-screen min-h-dvh flex flex-col px-6 py-8 max-w-md mx-auto">
-      {/* Always-on help: one tap calls family */}
-      {firstContact && (
+      <div className="flex items-start justify-between">
+        <button
+          onClick={() => setConfirmingSetup(true)}
+          aria-label={lang === "en" ? "Setup" : lang === "hi" ? "सेटअप" : "সেটআপ"}
+          className="p-3 -m-3 text-[var(--color-ink-tertiary)]"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+        {firstContact ? (
         <a
           href={`tel:${firstContact.whatsapp}`}
           className="self-end flex items-center gap-2 px-4 py-3 rounded-full bg-[var(--color-alert-soft)] text-[var(--color-alert)] font-bold text-lg"
@@ -179,7 +211,8 @@ export default function ElderDoseScreen({ lang }: { lang: Lang }) {
           </svg>
           {t(lang, "help")}
         </a>
-      )}
+        ) : <span />}
+      </div>
 
       <div className="flex-1 flex flex-col justify-center">
         {state === "alldone" || !dose ? (
