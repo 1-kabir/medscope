@@ -1,6 +1,5 @@
-import { useRef, useState } from "react";
-import Tesseract from "tesseract.js";
-import { saveMedicine, type Medicine } from "../../db";
+import { useEffect, useRef, useState } from "react";
+import { saveMedicine, listDevices, getSettings, getMyName, pullHousehold, type Medicine } from "../../db";
 import { t, localizeNumber, type Lang } from "../../i18n";
 import { useSpeaker, SpeakerIcon } from "../../speech";
 import { readMedicineImage, type MedicineReading } from "../../lib/prescription";
@@ -8,57 +7,93 @@ import { readMedicineImage, type MedicineReading } from "../../lib/prescription"
 type Step = 0 | 1 | 2 | 3; // photo | reading | confirm | stock
 
 const DEFAULT_SLOTS = ["08:00", "14:00", "21:00"];
+const DOSE_PRESETS = [0.25, 0.5, 1, 2];
+
+function normalizeSlot(raw: string): string | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
 
 export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: () => void }) {
   const [step, setStep] = useState<Step>(0);
-  const [ocrText, setOcrText] = useState("");
   const [nickname, setNickname] = useState("");
   const [name, setName] = useState("");
   const [strength, setStrength] = useState("");
   const [times, setTimes] = useState<string[]>([DEFAULT_SLOTS[0]]);
+  const [newTime, setNewTime] = useState("");
   const [tablets, setTablets] = useState(30);
   const [dosePerSlot, setDosePerSlot] = useState(1);
   const [aiName, setAiName] = useState(false);
+  const [aiError, setAiError] = useState("");
+  // Which elder in the household takes this medicine. A family phone may hold
+  // several elders' schedules, so the medicine has to say whose it is.
+  const [elders, setElders] = useState<{ id: string; name: string }[]>([]);
+  const [elderId, setElderId] = useState("");
   const speak = useSpeaker(lang);
   const fileRef = useRef<HTMLInputElement>(null);
+  const lastFile = useRef<File | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      await pullHousehold();
+      const [s, devices, myName] = await Promise.all([getSettings(), listDevices(), getMyName()]);
+      const label = t(lang, "thisPhone");
+      const opts: { id: string; name: string }[] = [];
+      const me = devices.find((d) => d.id === s.deviceKey);
+      const iAmElder = !me || me.role === "elder";
+      // This phone first when it is the one taking the medicine.
+      if (iAmElder) opts.push({ id: s.deviceKey, name: myName ? `${myName} (${label})` : label });
+      for (const d of devices) {
+        if (d.role !== "elder" || d.id === s.deviceKey) continue;
+        opts.push({ id: d.id, name: d.name || `${t(lang, "elder")} ${opts.length + 1}` });
+      }
+      setElders(opts);
+      setElderId((prev) => prev || (iAmElder ? s.deviceKey : opts[0]?.id || ""));
+    })();
+  }, [lang]);
 
   function applyReading(r: MedicineReading) {
     setNickname((prev) => prev || r.nickname || "");
     setName((prev) => prev || r.name || "");
     setStrength((prev) => prev || r.strength || "");
     if (r.times?.length) setTimes(r.times);
-    if ([0.25, 0.5, 1, 2].includes(r.dosePerSlot)) setDosePerSlot(r.dosePerSlot);
+    // Any quarter-tablet amount, not only the four presets.
+    if (typeof r.dosePerSlot === "number" && r.dosePerSlot > 0) setDosePerSlot(r.dosePerSlot);
     if (typeof r.tabletsInStrip === "number") setTablets(r.tabletsInStrip);
     setAiName(true);
     setStep(2);
   }
 
+  // The photo is read by the vision model, and only by the vision model. There
+  // is no on-device OCR fallback: a lower-quality guess presented as a reading
+  // is worse than an honest "couldn't read it, try again or type it in".
   async function runAI(file: File) {
+    lastFile.current = file;
+    setAiError("");
     setStep(1);
     try {
       const reading = await readMedicineImage(file, lang);
       applyReading(reading);
-    } catch {
-      // AI unavailable/failed — fall back to on-device OCR
-      await runOCR(file);
-    }
-  }
-
-  async function runOCR(file: File) {
-    setStep(1);
-    try {
-      const result = await Tesseract.recognize(file, "eng+ben");
-      setOcrText(result.data.text.trim());
-      // Best-effort: first non-empty line as the name
-      const firstLine = result.data.text.split("\n").map((l) => l.trim()).find((l) => l.length > 2);
-      if (firstLine && !name) setName(firstLine);
-    } finally {
+    } catch (e) {
+      const message = String((e as { message?: string }).message || e).slice(0, 200);
+      setAiError(message);
       setStep(2);
     }
   }
 
   function toggleTime(slot: string) {
     setTimes((prev) => (prev.includes(slot) ? prev.filter((s) => s !== slot) : [...prev, slot].sort()));
+  }
+
+  function addCustomTime() {
+    const slot = normalizeSlot(newTime);
+    if (!slot) return;
+    if (!times.includes(slot)) setTimes((prev) => [...prev, slot].sort());
+    setNewTime("");
   }
 
   async function save() {
@@ -69,6 +104,7 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
       strength,
       instruction: t(lang, "withWater"),
       times: times.length ? times : [DEFAULT_SLOTS[0]],
+      elderId: elderId || undefined,
       dosePerSlot,
       tabletsLeft: tablets,
       createdAt: Date.now(),
@@ -124,16 +160,29 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
       {step === 2 && (
         <div className="flex-1 flex flex-col gap-5 mt-2">
           <h2 className="text-2xl font-bold">{t(lang, "confirmDetails")}</h2>
-          {ocrText && (
-            <details className="text-sm text-[var(--color-ink-tertiary)] bg-[var(--color-surface-muted)] rounded-xl p-3">
-              <summary className="cursor-pointer">{t(lang, "readText")}</summary>
-              <p className="whitespace-pre-wrap mt-2">{ocrText}</p>
-            </details>
-          )}
           {aiName && (
             <p className="text-sm font-semibold text-[var(--color-accent)]">
               {lang === "en" ? "Auto-filled from the photo. Check every field." : lang === "hi" ? "फोटो से भरा गया। हर जानकारी जाँचें।" : "ছবি থেকে ভরা হয়েছে। সব তথ্য দেখে নিন।"}
             </p>
+          )}
+          {aiError && (
+            <div className="text-sm text-[var(--color-ink-secondary)] bg-[var(--color-alert-soft)] rounded-xl p-4">
+              <p className="font-semibold" role="status">{t(lang, "photoUnread")}</p>
+              <button
+                onClick={() => {
+                  const file = lastFile.current;
+                  if (file) void runAI(file);
+                }}
+                disabled={!lastFile.current}
+                className="mt-3 w-full text-base font-bold py-3 rounded-xl bg-[var(--color-accent)] text-white disabled:opacity-40"
+              >
+                {t(lang, "tryAgain")}
+              </button>
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[var(--color-ink-tertiary)]">Details</summary>
+                <p className="mt-1 break-words text-[var(--color-ink-tertiary)]">{aiError}</p>
+              </details>
+            </div>
           )}
           {[
             { label: t(lang, "nickname"), value: nickname, set: setNickname, placeholder: t(lang, "nicknamePh") },
@@ -150,25 +199,72 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
               />
             </label>
           ))}
+
+          {elders.length > 1 && (
+            <div>
+              <span className="text-base font-semibold text-[var(--color-ink-secondary)]">{t(lang, "whoTakes")}</span>
+              <div className="flex flex-wrap gap-3 mt-2">
+                {elders.map((e) => (
+                  <button
+                    key={e.id}
+                    onClick={() => setElderId(e.id)}
+                    aria-pressed={elderId === e.id}
+                    className={`text-lg px-5 py-4 rounded-xl border-2 font-semibold ${elderId === e.id ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-line)] bg-[var(--color-surface)]"}`}
+                  >
+                    {e.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <span className="text-base font-semibold text-[var(--color-ink-secondary)]">{t(lang, "timesLabel")}</span>
             <div className="flex flex-wrap gap-3 mt-2">
-              {DEFAULT_SLOTS.map((slot) => (
+              {times.map((slot) => (
                 <button
                   key={slot}
                   onClick={() => toggleTime(slot)}
-                  aria-pressed={times.includes(slot)}
-                  className={`text-xl px-5 py-4 rounded-xl border-2 font-semibold ${times.includes(slot) ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-line)] bg-[var(--color-surface)]"}`}
+                  aria-pressed={true}
+                  aria-label={`${localizeNumber(slot, lang)} — ${t(lang, "remove")}`}
+                  className="text-xl px-5 py-4 rounded-xl border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] font-semibold"
                 >
-                  {slot}
+                  {localizeNumber(slot, lang)}
+                </button>
+              ))}
+              {DEFAULT_SLOTS.filter((s) => !times.includes(s)).map((slot) => (
+                <button
+                  key={slot}
+                  onClick={() => toggleTime(slot)}
+                  aria-pressed={false}
+                  className="text-xl px-5 py-4 rounded-xl border-2 border-dashed border-[var(--color-line)] text-[var(--color-ink-secondary)] font-semibold"
+                >
+                  + {localizeNumber(slot, lang)}
                 </button>
               ))}
             </div>
+            <div className="flex gap-3 mt-3">
+              <input
+                type="time"
+                value={newTime}
+                onChange={(e) => setNewTime(e.target.value)}
+                aria-label={t(lang, "addTime")}
+                className="flex-1 min-w-0 text-xl px-4 py-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-line)]"
+              />
+              <button
+                onClick={addCustomTime}
+                disabled={!normalizeSlot(newTime)}
+                className="shrink-0 text-lg font-bold px-5 rounded-xl bg-[var(--color-surface-muted)] disabled:opacity-40"
+              >
+                {t(lang, "addBtn")}
+              </button>
+            </div>
           </div>
+
           <div>
             <span className="text-base font-semibold text-[var(--color-ink-secondary)]">{t(lang, "dosePerSlotLabel")}</span>
             <div className="flex flex-wrap gap-3 mt-2">
-              {[0.25, 0.5, 1, 2].map((u) => (
+              {DOSE_PRESETS.map((u) => (
                 <button
                   key={u}
                   onClick={() => setDosePerSlot(u)}
@@ -179,7 +275,24 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
                 </button>
               ))}
             </div>
+            <label className="flex items-center gap-3 mt-3">
+              <span className="text-base text-[var(--color-ink-secondary)]">{t(lang, "customDose")}</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.25"
+                min="0.25"
+                max="20"
+                value={dosePerSlot}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v >= 0.25 && v <= 20) setDosePerSlot(v);
+                }}
+                className="w-24 text-xl px-4 py-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-line)]"
+              />
+            </label>
           </div>
+
           <button
             onClick={() => setStep(3)}
             disabled={!name && !nickname}

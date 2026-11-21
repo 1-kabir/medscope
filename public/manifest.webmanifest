@@ -1,0 +1,13 @@
+{
+  "name": "MedScope",
+  "short_name": "MedScope",
+  "description": "Offline-first medicine reminders in Bengali",
+  "lang": "bn",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "start_url": "/",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

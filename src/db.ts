@@ -162,9 +162,12 @@ export async function undoDose(logId: string): Promise<void> {
       med.synced = false;
       await saveMedicine(med);
     }
-    // Deleting a synced row requires server-side delete; mark it superseded instead.
+    // A synced row is removed on the server too. Writing a correcting "missed"
+    // row instead left both entries in history, so the dose looked missed.
     if (log.synced) {
-      await logDose({ ...log, id: crypto.randomUUID(), status: "missed", units: 0, at: Date.now(), synced: false });
+      void tablesDB
+        .deleteRow({ databaseId: DATABASE_ID, tableId: Collections.takenLogs, rowId: log.id })
+        .catch(() => { /* offline: the row is gone locally, which is what the user sees */ });
     }
   }
 }
@@ -188,13 +191,35 @@ export async function logsSince(days: number): Promise<DoseLog[]> {
 
 // ---- Contacts ----
 
+// One canonical form: digits only, with the country code. The elder types
+// "91233 13155"; WhatsApp needs "919123313155". Doing it at save time means
+// every screen, the tel: link and the escalation checker agree on one number.
+const DEFAULT_COUNTRY = "91"; // India
+
+export function normalizePhone(raw: string): string {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
+  if (d.length === 10) d = DEFAULT_COUNTRY + d;
+  return d;
+}
+
+// Display form for a saved number: +91 91233 13155.
+export function formatPhone(e164: string): string {
+  const d = normalizePhone(e164);
+  if (d.length === 12 && d.startsWith(DEFAULT_COUNTRY)) {
+    return `+${DEFAULT_COUNTRY} ${d.slice(2, 7)} ${d.slice(7)}`;
+  }
+  return d ? `+${d}` : "";
+}
+
 export async function listContacts(): Promise<Contact[]> {
   return getAll<Contact>("contacts");
 }
 
 export async function saveContact(c: Contact): Promise<void> {
-  await put("contacts", c);
-  queueSync(Collections.contacts, c.id, contactToDoc(c));
+  const saved = { ...c, whatsapp: normalizePhone(c.whatsapp) || c.whatsapp };
+  await put("contacts", saved);
+  queueSync(Collections.contacts, saved.id, contactToDoc(saved));
 }
 
 // ---- Settings ----
@@ -227,6 +252,25 @@ export async function getSettings(): Promise<Settings> {
 // Pause reminders: away at a wedding, hospital visit — no noise, no false misses.
 export async function setPause(until: number | null): Promise<void> {
   await setSetting("pauseUntil", until);
+  void pushPauseState(until);
+}
+
+// Best-effort: the checker reads pauseUntil off the elder's device row and stays
+// quiet while it is in the future. Deliberately not queued — an unprovisioned
+// attribute or an offline phone must never block the rest of the sync queue.
+async function pushPauseState(until: number | null): Promise<void> {
+  try {
+    const s = await getSettings();
+    if (!s.householdId || !navigator.onLine) return;
+    await tablesDB.updateRow({
+      databaseId: DATABASE_ID,
+      tableId: Collections.devices,
+      rowId: s.deviceKey,
+      data: { pauseUntil: until ?? 0 },
+    });
+  } catch {
+    /* attribute not provisioned yet, or offline */
+  }
 }
 
 export async function isPaused(): Promise<boolean> {
@@ -306,9 +350,34 @@ export async function leaveHousehold(): Promise<void> {
 
 const syncQueue: { collection: string; id: string; doc: Record<string, unknown> }[] = [];
 let syncing = false;
+let lastSyncAt: number | null = null;
+
+// What the family surface shows so nobody has to wonder whether a change
+// landed. Local-first means writes can wait; saying so is cheaper than doubt.
+export type SyncState = { pending: number; syncing: boolean; lastSyncAt: number | null };
+
+const syncListeners = new Set<(s: SyncState) => void>();
+
+export function getSyncState(): SyncState {
+  return { pending: syncQueue.length, syncing, lastSyncAt };
+}
+
+export function subscribeSync(fn: (s: SyncState) => void): () => void {
+  syncListeners.add(fn);
+  fn(getSyncState());
+  return () => {
+    syncListeners.delete(fn);
+  };
+}
+
+function notifySync() {
+  const state = getSyncState();
+  for (const fn of syncListeners) fn(state);
+}
 
 function queueSync(collection: string, id: string, doc: Record<string, unknown>) {
   syncQueue.push({ collection, id, doc });
+  notifySync();
   void drainSync();
 }
 
@@ -351,9 +420,9 @@ export function contactToDoc(c: Contact): Record<string, unknown> {
 
 export async function registerDevice(role: "elder" | "family"): Promise<void> {
   const s = await getSettings();
-  if (!s.householdId) return;
   const existing = await getSetting<string>("deviceName");
-  const info: DeviceInfo = { id: s.deviceKey, householdId: s.householdId, role, name: existing ?? (role === "elder" ? "" : "") };
+  if (!s.householdId) return;
+  const info: DeviceInfo = { id: s.deviceKey, householdId: s.householdId, role, name: existing ?? "" };
   await put("devices", info);
   queueSync(Collections.devices, info.id, { role: info.role, name: info.name });
 }
@@ -376,16 +445,36 @@ export async function listDevices(): Promise<DeviceInfo[]> {
   return getAll<DeviceInfo>("devices");
 }
 
+// ---- Who am I ----
+// A name on the device row is what the other phone shows ("Kabir's medicines"
+// instead of "Elder 1"), so both the elder and a family member can set it.
+
+export async function getMyName(): Promise<string> {
+  return (await getSetting<string>("deviceName")) ?? "";
+}
+
+export async function setMyName(name: string): Promise<void> {
+  const clean = name.trim().slice(0, 40);
+  const s = await getSettings();
+  const mode = await getSetting<"elder" | "family">("mode");
+  await setSetting("deviceName", clean);
+  await put("devices", { id: s.deviceKey, householdId: s.householdId ?? "", role: mode ?? "family", name: clean });
+  queueSync(Collections.devices, s.deviceKey, { name: clean });
+}
+
 // Pull the household's shared data into the local store. Remote wins for
 // medicines (the elder's device is the truth for schedules); logs merge by id.
 export async function pullHousehold(): Promise<void> {
   const s = await getSettings();
   if (!s.householdId || !navigator.onLine) return;
   try {
-    const [medRes, logRes, devRes] = await Promise.all([
+    const [medRes, logRes, devRes, conRes] = await Promise.all([
       tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.medicines, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
       tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.takenLogs, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
       tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.devices, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
+      // Contacts are the shared family roster: whoever the family adds is in
+      // the elder's phone book, and whoever the elder adds shows up for family.
+      tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.contacts, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
     ]);
 
     for (const d of medRes.rows as unknown as Record<string, unknown>[]) {
@@ -421,6 +510,18 @@ export async function pullHousehold(): Promise<void> {
       await put("taken", l);
     }
 
+    for (const d of conRes.rows as unknown as Record<string, unknown>[]) {
+      const c: Contact = {
+        id: String(d.$id),
+        name: String(d.name ?? ""),
+        relation: String(d.relation ?? ""),
+        whatsapp: String(d.whatsapp ?? ""),
+        synced: true,
+      };
+      // A contact with no number is useless as a call button; skip it.
+      if (c.whatsapp) await put("contacts", c);
+    }
+
     for (const d of devRes.rows as unknown as Record<string, unknown>[]) {
       const info: DeviceInfo = {
         id: String(d.$id),
@@ -446,18 +547,22 @@ async function drainSync(): Promise<void> {
       try {
         await tablesDB.createRow({ databaseId: DATABASE_ID, tableId: item.collection, rowId: item.id, data: doc });
         syncQueue.shift();
+        lastSyncAt = Date.now();
       } catch {
         // Row probably exists (a local update, e.g. stock change): upsert.
         try {
           await tablesDB.updateRow({ databaseId: DATABASE_ID, tableId: item.collection, rowId: item.id, data: doc });
           syncQueue.shift();
+          lastSyncAt = Date.now();
         } catch {
           break; // offline or table not ready — retry later
         }
       }
+      notifySync();
     }
   } finally {
     syncing = false;
+    notifySync();
   }
 }
 

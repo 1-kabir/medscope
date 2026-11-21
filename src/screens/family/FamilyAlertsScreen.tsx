@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { listContacts, saveContact, type Contact } from "../../db";
+import { listContacts, saveContact, formatPhone, normalizePhone, type Contact } from "../../db";
 import { t, type Lang } from "../../i18n";
 import { useSpeaker, SpeakerIcon } from "../../speech";
 
-export default function FamilyAlertsScreen({ lang, onBack }: { lang: Lang; onBack: () => void }) {
+// A tab, not a pushed screen: the navbar is the way back, so no Back arrow.
+export default function FamilyAlertsScreen({ lang }: { lang: Lang }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -17,8 +18,9 @@ export default function FamilyAlertsScreen({ lang, onBack }: { lang: Lang; onBac
   }, []);
 
   async function add() {
-    if (!name.trim() || !whatsapp.trim()) return;
-    const c: Contact = { id: crypto.randomUUID(), name: name.trim(), relation: relation.trim(), whatsapp: whatsapp.trim(), synced: false };
+    // Stored with its country code, so every later send and tel: link matches.
+    if (!name.trim() || normalizePhone(whatsapp).length < 11) return;
+    const c: Contact = { id: crypto.randomUUID(), name: name.trim(), relation: relation.trim(), whatsapp: normalizePhone(whatsapp), synced: false };
     await saveContact(c);
     setContacts(await listContacts());
     setName("");
@@ -28,11 +30,8 @@ export default function FamilyAlertsScreen({ lang, onBack }: { lang: Lang; onBac
   }
 
   return (
-    <div className="min-h-dvh px-6 py-8 max-w-md mx-auto pb-10">
-      <button onClick={onBack} className="self-start text-lg font-semibold text-[var(--color-accent)] py-2 px-1">
-        ← {lang === "en" ? "Back" : lang === "hi" ? "वापस" : "পেছনে"}
-      </button>
-      <h1 className="text-3xl font-bold mt-4">{t(lang, "family")}</h1>
+    <div className="anim-screen min-h-dvh px-6 pt-8 pb-10 max-w-md mx-auto">
+      <h1 className="text-3xl font-bold">{t(lang, "family")}</h1>
 
       <div className="mt-6 space-y-3">
         {contacts.map((c) => (
@@ -41,7 +40,7 @@ export default function FamilyAlertsScreen({ lang, onBack }: { lang: Lang; onBac
               <p className="text-xl font-semibold">{c.name}</p>
               <p className="text-base text-[var(--color-ink-secondary)]">{c.relation}</p>
             </div>
-            <p className="text-lg">{c.whatsapp}</p>
+            <p className="text-lg">{formatPhone(c.whatsapp)}</p>
           </div>
         ))}
         {!adding && (

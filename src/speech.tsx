@@ -4,16 +4,35 @@ import { speechLocale, type Lang } from "./i18n";
 // Web Speech Synthesis — Bengali first, silent failure on unsupported browsers.
 
 export function speak(text: string, lang: Lang): void {
+  speakLines([{ text, lang }]);
+}
+
+// Say several lines back to back. Each line keeps its own language, so a screen
+// can read its question in the elder's language and still pronounce a language
+// name correctly. Queued rather than cancelled, so lines don't cut each other off.
+let lastSignature = "";
+let lastSpokenAt = 0;
+
+export function speakLines(lines: { text: string; lang: Lang }[]): void {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
   try {
+    // The same lines twice in a row is a double render (React StrictMode), not
+    // a request — say it once so a screen never repeats itself.
+    const signature = lines.map((l) => `${l.lang}:${l.text}`).join(">>");
+    const now = Date.now();
+    if (signature === lastSignature && now - lastSpokenAt < 1000) return;
+    lastSignature = signature;
+    lastSpokenAt = now;
     window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = speechLocale(lang);
-    utter.rate = 0.9;
     const voices = window.speechSynthesis.getVoices();
-    const match = voices.find((v) => v.lang.startsWith(utter.lang.slice(0, 2)));
-    if (match) utter.voice = match;
-    window.speechSynthesis.speak(utter);
+    for (const line of lines) {
+      const utter = new SpeechSynthesisUtterance(line.text);
+      utter.lang = speechLocale(line.lang);
+      utter.rate = 0.9;
+      const match = voices.find((v) => v.lang.startsWith(utter.lang.slice(0, 2)));
+      if (match) utter.voice = match;
+      window.speechSynthesis.speak(utter);
+    }
   } catch {
     /* speech is best-effort */
   }

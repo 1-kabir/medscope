@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { logsSince, listDevices, logDose, deleteLog, listMedicines, isPaused, type DoseLog, type DeviceInfo } from "../../db";
 import { t, localizeNumber, type Lang } from "../../i18n";
 
-export default function HistoryScreen({ lang, onBack }: { lang: Lang; onBack: () => void }) {
+// A tab, not a pushed screen: the navbar is the way back, so no Back arrow.
+export default function HistoryScreen({ lang }: { lang: Lang }) {
   const [range, setRange] = useState<"today" | "week">("today");
   const [logs, setLogs] = useState<DoseLog[]>([]);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
@@ -59,11 +60,8 @@ export default function HistoryScreen({ lang, onBack }: { lang: Lang; onBack: ()
   }, [shown]);
 
   return (
-    <div className="min-h-dvh px-6 py-8 max-w-md mx-auto">
-      <button onClick={onBack} className="self-start text-lg font-semibold text-[var(--color-accent)] py-2 px-1">
-        ← {lang === "en" ? "Back" : lang === "hi" ? "वापस" : "পেছনে"}
-      </button>
-      <h1 className="text-3xl font-bold mt-4">{t(lang, "history")}</h1>
+    <div className="anim-screen min-h-dvh px-6 pt-8 pb-6 max-w-md mx-auto">
+      <h1 className="text-3xl font-bold">{t(lang, "history")}</h1>
 
       <div className="flex gap-3 mt-5">
         {(["today", "week"] as const).map((r) => (
@@ -85,10 +83,20 @@ export default function HistoryScreen({ lang, onBack }: { lang: Lang; onBack: ()
       )}
 
       <div className="mt-6 space-y-6">
-        {days.length === 0 && <p className="text-lg text-[var(--color-ink-secondary)]">—</p>}
+        {days.length === 0 && (
+          <p className="text-lg text-[var(--color-ink-secondary)] py-6">{t(lang, "noHistory")}</p>
+        )}
         {days.map(([date, dayLogs]) => (
           <div key={date}>
-            <p className="text-base font-semibold text-[var(--color-ink-secondary)] mb-2">{date.slice(5)}</p>
+            <p className="text-base font-semibold text-[var(--color-ink-secondary)] mb-2">
+              {localizeNumber(
+                new Date(date + "T00:00:00").toLocaleDateString(
+                  lang === "bn" ? "bn-BD" : lang === "hi" ? "hi-IN" : "en-IN",
+                  { day: "numeric", month: "short" }
+                ),
+                lang
+              )}
+            </p>
             <div className="space-y-2">
               {dayLogs.map((l) => (
                 <div key={l.id} className="flex items-center justify-between py-3 border-b border-[var(--color-line)]">

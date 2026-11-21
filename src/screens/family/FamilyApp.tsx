@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { t, type Lang } from "../../i18n";
+import { useEffect, useState } from "react";
+import { t, localizeNumber, type Lang } from "../../i18n";
+import { subscribeSync, type SyncState } from "../../db";
 import MedicineListScreen from "./MedicineListScreen";
 import HistoryScreen from "./HistoryScreen";
 import FamilyAlertsScreen from "./FamilyAlertsScreen";
@@ -52,6 +53,9 @@ export default function FamilyApp({
   onLangChange: (l: Lang) => void;
 }) {
   const [tab, setTab] = useState<Tab>("medicines");
+  const [sync, setSync] = useState<SyncState>({ pending: 0, syncing: false, lastSyncAt: null });
+
+  useEffect(() => subscribeSync(setSync), []);
 
   const labels: Record<Tab, string> = {
     medicines: t(lang, "medicines"),
@@ -61,19 +65,37 @@ export default function FamilyApp({
     settings: t(lang, "settings"),
   };
 
+  // Only appears while something is actually in flight — otherwise it is silence.
+  const syncLine =
+    sync.syncing
+      ? t(lang, "syncing")
+      : sync.pending > 0
+        ? t(lang, "pendingSync", { n: localizeNumber(sync.pending, lang) })
+        : null;
+
   return (
     <div className="min-h-dvh max-w-md mx-auto relative">
+      {syncLine && (
+        <p
+          role="status"
+          aria-live="polite"
+          className="text-center text-xs font-semibold tracking-wide text-[var(--color-ink-tertiary)] pt-2 px-6"
+        >
+          {syncLine}
+        </p>
+      )}
+
       <main key={tab} className="anim-screen pb-28">
         {tab === "medicines" ? (
           <MedicineListScreen lang={lang} onOpenHistory={() => setTab("history")} />
         ) : tab === "history" ? (
-          <HistoryScreen lang={lang} onBack={() => setTab("medicines")} />
+          <HistoryScreen lang={lang} />
         ) : tab === "family" ? (
-          <FamilyAlertsScreen lang={lang} onBack={() => setTab("medicines")} />
+          <FamilyAlertsScreen lang={lang} />
         ) : tab === "stock" ? (
-          <StockScreen lang={lang} onBack={() => setTab("medicines")} />
+          <StockScreen lang={lang} />
         ) : (
-          <SettingsScreen lang={lang} onLangChange={onLangChange} onBack={() => setTab("medicines")} />
+          <SettingsScreen lang={lang} onLangChange={onLangChange} />
         )}
       </main>
 
@@ -89,16 +111,16 @@ export default function FamilyApp({
               key={id}
               onClick={() => setTab(id)}
               aria-current={active ? "page" : undefined}
-              className={`flex-1 flex flex-col items-center gap-1 pt-3 pb-2 transition-colors ${
+              className={`flex-1 min-w-0 flex flex-col items-center gap-1.5 pt-3 pb-2.5 transition-colors ${
                 active ? "text-[var(--color-accent)]" : "text-[var(--color-ink-tertiary)]"
               }`}
             >
               {ICONS[id]}
-              <span className={`text-xs leading-none ${active ? "font-bold" : "font-medium"}`}>{labels[id]}</span>
-              <span
-                aria-hidden="true"
-                className={`h-0.5 w-8 rounded-full ${active ? "bg-[var(--color-accent)]" : "bg-transparent"}`}
-              />
+              {/* One label, no extra underline rule: the accent colour and the
+                  bold weight already say which tab is open. */}
+              <span className={`w-full text-center text-[11px] leading-none truncate px-1 ${active ? "font-bold" : "font-medium"}`}>
+                {labels[id]}
+              </span>
             </button>
           );
         })}

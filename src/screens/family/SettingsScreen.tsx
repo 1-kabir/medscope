@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { LANGUAGES, t, type Lang } from "../../i18n";
-import { setSetting, applyBackup } from "../../db";
+import { setSetting, applyBackup, getMyName, setMyName } from "../../db";
 import {
   getAccountInfo,
   emailAuth,
-  phoneStart,
-  phoneVerify,
+  phoneAuth,
   signOut,
   saveBackup,
   listBackups,
@@ -13,32 +12,32 @@ import {
   type AccountInfo,
 } from "../../lib/auth";
 
-type Mode = "closed" | "phone" | "phone-code" | "email";
+type Mode = "closed" | "phone" | "email";
 
+// A tab, not a pushed screen: the navbar is the way back, so no Back arrow.
 export default function SettingsScreen({
   lang,
   onLangChange,
-  onBack,
 }: {
   lang: Lang;
   onLangChange: (l: Lang) => void;
-  onBack: () => void;
 }) {
   const [authMode, setAuthMode] = useState<Mode>("closed");
   const [acct, setAcct] = useState<AccountInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  // phone flow
+  // phone flow (number + password — this server cannot send SMS)
   const [phone, setPhone] = useState("");
-  const [phoneUserId, setPhoneUserId] = useState("");
-  const [code, setCode] = useState("");
+  const [phonePassword, setPhonePassword] = useState("");
   // email flow
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   // backups
   const [backups, setBackups] = useState<{ id: string; savedAt: number; medicines: number }[]>([]);
   const [restored, setRestored] = useState("");
+  const [myName, setMyNameDraft] = useState("");
+  const [nameSaved, setNameSaved] = useState(false);
 
   const L = (en: string, hi: string, bn: string) => (lang === "en" ? en : lang === "hi" ? hi : bn);
 
@@ -50,6 +49,7 @@ export default function SettingsScreen({
 
   useEffect(() => {
     void refreshAuth();
+    void getMyName().then(setMyNameDraft);
   }, []);
 
   async function run(fn: () => Promise<void>) {
@@ -67,11 +67,8 @@ export default function SettingsScreen({
   }
 
   return (
-    <div className="anim-push min-h-dvh px-6 py-8 max-w-md mx-auto">
-      <button onClick={onBack} className="text-lg font-semibold text-[var(--color-accent)] py-2 px-1">
-        ← {L("Back", "वापस", "পেছনে")}
-      </button>
-      <h1 className="text-3xl font-bold mt-4">{t(lang, "settings")}</h1>
+    <div className="anim-screen min-h-dvh px-6 pt-8 pb-6 max-w-md mx-auto">
+      <h1 className="text-3xl font-bold">{t(lang, "settings")}</h1>
 
       <section className="mt-8">
         <p className="text-base font-semibold text-[var(--color-ink-secondary)] mb-3">{t(lang, "language")}</p>
@@ -92,6 +89,38 @@ export default function SettingsScreen({
         </div>
       </section>
 
+      <section className="mt-8">
+        <p className="text-base font-semibold text-[var(--color-ink-secondary)] mb-1">{t(lang, "yourName")}</p>
+        <p className="text-sm text-[var(--color-ink-tertiary)] mb-3">
+          {L(
+            "Shown on the other phones in this household.",
+            "इस परिवार के दूसरे फ़ोन पर दिखता है।",
+            "পরিবারের অন্য ফোনে দেখা যায়।"
+          )}
+        </p>
+        <div className="flex gap-3">
+          <input
+            value={myName}
+            onChange={(e) => {
+              setMyNameDraft(e.target.value);
+              setNameSaved(false);
+            }}
+            placeholder={L("e.g. Kabir", "जैसे: कबीर", "যেমন: কবির")}
+            className="flex-1 min-w-0 text-xl px-4 py-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-line)]"
+          />
+          <button
+            onClick={() => {
+              void setMyName(myName).then(() => setNameSaved(true));
+            }}
+            disabled={!myName.trim()}
+            className="shrink-0 text-lg font-bold px-5 rounded-xl bg-[var(--color-accent)] text-white disabled:opacity-40"
+          >
+            {t(lang, "save")}
+          </button>
+        </div>
+        {nameSaved && <p className="mt-2 text-base font-semibold text-[var(--color-accent)]">{t(lang, "nameSaved")}</p>}
+      </section>
+
       {/* Backup & restore — optional, never shown during onboarding */}
       <section className="mt-8">
         <p className="text-base font-semibold text-[var(--color-ink-secondary)] mb-1">{L("Backup & restore", "बैकअप और रीस्टोर", "ব্যাকআপ ও রিস্টোর")}</p>
@@ -101,11 +130,11 @@ export default function SettingsScreen({
 
         {!acct ? (
           authMode === "closed" ? (
-            <div className="flex gap-3">
-              <button onClick={() => setAuthMode("phone")} className="flex-1 text-lg font-bold py-4 rounded-2xl bg-[var(--color-accent)] text-white">
+            <div className="space-y-3">
+              <button onClick={() => setAuthMode("phone")} className="w-full text-lg font-bold py-4 rounded-2xl bg-[var(--color-accent)] text-white">
                 {L("Sign in with phone", "फ़ोन से साइन इन", "ফোন দিয়ে সাইন ইন")}
               </button>
-              <button onClick={() => setAuthMode("email")} className="flex-1 text-lg font-bold py-4 rounded-2xl border-2 border-[var(--color-line)]">
+              <button onClick={() => setAuthMode("email")} className="w-full text-lg font-bold py-4 rounded-2xl border-2 border-[var(--color-line)]">
                 Email
               </button>
             </div>
@@ -119,32 +148,29 @@ export default function SettingsScreen({
                 placeholder="+91…"
                 className="w-full text-xl px-4 py-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-line)]"
               />
+              <input
+                type="password"
+                value={phonePassword}
+                onChange={(e) => setPhonePassword(e.target.value)}
+                placeholder={L("password (8+ characters)", "पासवर्ड (8+ अक्षर)", "পাসওয়ার্ড (৮+ অক্ষর)")}
+                className="w-full text-xl px-4 py-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-line)]"
+              />
+              <p className="text-sm text-[var(--color-ink-tertiary)]">
+                {L(
+                  "No SMS code is needed. Use the same number and password on your other phone.",
+                  "कोई एसएमएस कोड नहीं चाहिए। दूसरे फ़ोन पर यही नंबर और पासवर्ड डालें।",
+                  "কোনো এসএমএস কোড লাগবে না। অন্য ফোনে একই নম্বর ও পাসওয়ার্ড দিন।"
+                )}
+              </p>
               <button
-                onClick={() => void run(async () => { setPhoneUserId(await phoneStart(phone)); setAuthMode("phone-code"); })}
-                disabled={!phone.trim() || busy}
+                onClick={() => void run(() => phoneAuth(phone, phonePassword))}
+                disabled={!phone.trim() || phonePassword.length < 8 || busy}
                 className="w-full text-lg font-bold py-4 rounded-2xl bg-[var(--color-accent)] text-white disabled:opacity-40"
               >
-                {L("Send code", "कोड भेजें", "কোড পাঠান")}
+                {L("Sign in / Sign up", "साइन इन / साइन अप", "সাইন ইন / সাইন আপ")}
               </button>
               <button onClick={() => setAuthMode("closed")} className="w-full text-base py-2 text-[var(--color-ink-secondary)]">
                 {t(lang, "cancel")}
-              </button>
-            </div>
-          ) : authMode === "phone-code" ? (
-            <div className="space-y-3">
-              <input
-                inputMode="numeric"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder={L("6-digit code", "६-अंक कोड", "৬-ডিজিট কোড")}
-                className="w-full text-2xl tracking-[0.3em] text-center px-4 py-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-line)]"
-              />
-              <button
-                onClick={() => void run(() => phoneVerify(phoneUserId, code))}
-                disabled={code.length < 4 || busy}
-                className="w-full text-lg font-bold py-4 rounded-2xl bg-[var(--color-accent)] text-white disabled:opacity-40"
-              >
-                {L("Verify", "सत्यापित करें", "যাচাই করুন")}
               </button>
             </div>
           ) : (
@@ -225,9 +251,9 @@ export default function SettingsScreen({
           onClick={() => {
             void setSetting("mode", null).then(() => window.location.reload());
           }}
-          className="text-lg font-semibold text-[var(--color-accent)] py-3 px-4 rounded-xl bg-[var(--color-surface-muted)]"
+          className="w-full text-lg font-semibold text-[var(--color-accent)] py-4 px-4 rounded-xl bg-[var(--color-surface-muted)]"
         >
-          {t(lang, "cancel")} / {t(lang, "whoUsesPhone")}
+          {t(lang, "whoUsesPhone")}
         </button>
       </section>
 

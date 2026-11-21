@@ -20,7 +20,7 @@ and never gives medical advice.
 │                                │  best-  │    devices, contacts, alerts,     │
 │  IndexedDB = source of truth   │  effort │    backups                        │
 │  Web Speech (TTS + STT)        │         │  Functions:                       │
-│  tesseract.js (fallback OCR)   │         │   • checker  (cron every 10 min)  │
+│  photo → ai-proxy (vision)     │         │   • checker  (cron every 10 min)  │
 └───────────────┬────────────────┘         │   • ai-proxy (HTTP, vision)       │
                 │ vision POST              └──────────────┬────────────────────┘
                 ▼ (guest execute)                         │
@@ -44,8 +44,8 @@ sync target — the UI never waits on the network.
   **১০ মিনিট পরে** (Remind in 10 min). Voice input: "আমি খেয়েছি" works too.
 - Always-on red Help button — one tap calls the family member. No contacts yet?
   It opens the elder's own contact manager instead.
-- Gear screen (the elder's control center): add medicines by photo (AI reads
-  the strip, auto-fills the form; tesseract fallback), manage emergency
+- Gear screen (the elder's control center): add medicines by photo (the vision
+  model reads the strip and auto-fills the form — no on-device OCR), manage emergency
   contacts, see the family code, pause reminders 3 days, switch language.
 - Fractional doses: ¼ / ½ / 1 / 2 tablets per dose; stock counts in units.
 
@@ -160,10 +160,13 @@ redeploying the site — no APK rebuild. Only native-plugin changes need one.
 1. **Reminders need the app open** (PWA constraint). The WhatsApp/call
    escalation is the backstop and works regardless. True background alarms
    need the Capacitor path + `@capacitor/local-notifications` (planned).
-2. **Pause is device-local** — the elder's phone goes quiet, but the checker
-   still escalates. Fix: a `pauseUntil` column on `devices` the checker honors.
-3. **No delete-on-sync** — undoing an already-synced taken log writes a
-   correcting "missed" row instead of deleting remotely.
+2. **Pause needs one schema field** — the phone writes `pauseUntil` onto its
+   `devices` row and the checker honors it (no miss, no message, no call while
+   paused). Add an integer attribute `pauseUntil` to the `devices` table in
+   Appwrite for this to travel to the server; without it pause stays local.
+3. **Undo deletes remotely, best-effort** — undoing a synced taken log now
+   calls `deleteRow` fire-and-forget. If the phone is offline at that moment
+   the row survives on the server until the next pull rewrites it.
 4. **Open table permissions** — household codes are the only access control.
    Fine for demo; production wants per-household permissions.
 5. **WhatsApp test number** — 5 verified recipients max; real families need a

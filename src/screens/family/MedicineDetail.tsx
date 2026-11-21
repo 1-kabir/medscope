@@ -7,6 +7,23 @@ export default function MedicineDetail({ lang, id, onBack }: { lang: Lang; id: s
   const [med, setMed] = useState<Medicine | null>(null);
   const [logs, setLogs] = useState<DoseLog[]>([]);
   const [confirming, setConfirming] = useState(false);
+  const [newTime, setNewTime] = useState("");
+
+  function patch(update: Partial<Medicine>) {
+    if (!med) return;
+    const updated = { ...med, ...update, synced: false };
+    setMed(updated);
+    void saveMedicine(updated);
+  }
+
+  function addTime() {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(newTime.trim());
+    if (!m) return;
+    const slot = `${String(Math.min(23, Number(m[1]))).padStart(2, "0")}:${m[2]}`;
+    if (!med || med.times.includes(slot)) return;
+    patch({ times: [...med.times, slot].sort() });
+    setNewTime("");
+  }
   const speak = useSpeaker(lang);
 
   useEffect(() => {
@@ -65,11 +82,7 @@ export default function MedicineDetail({ lang, id, onBack }: { lang: Lang; id: s
           {[0.25, 0.5, 1, 2].map((u) => (
             <button
               key={u}
-              onClick={() => {
-                const updated = { ...med, dosePerSlot: u, synced: false };
-                setMed(updated);
-                void saveMedicine(updated);
-              }}
+              onClick={() => patch({ dosePerSlot: u })}
               aria-pressed={(med.dosePerSlot ?? 1) === u}
               className={`text-xl px-5 py-4 rounded-xl border-2 font-semibold ${(med.dosePerSlot ?? 1) === u ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-line)]"}`}
             >
@@ -77,6 +90,22 @@ export default function MedicineDetail({ lang, id, onBack }: { lang: Lang; id: s
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-3 mt-3">
+          <span className="text-base text-[var(--color-ink-secondary)]">{t(lang, "customDose")}</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.25"
+            min="0.25"
+            max="20"
+            value={med.dosePerSlot ?? 1}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isFinite(v) && v >= 0.25 && v <= 20) patch({ dosePerSlot: v });
+            }}
+            className="w-24 text-xl px-4 py-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-line)]"
+          />
+        </label>
       </div>
 
       {/* 7-day adherence strip */}
@@ -99,21 +128,45 @@ export default function MedicineDetail({ lang, id, onBack }: { lang: Lang; id: s
       <div className="mt-auto flex flex-col gap-3 pb-2">
         <label className="text-base font-semibold text-[var(--color-ink-secondary)]">{t(lang, "editTimes")}</label>
         <div className="flex flex-wrap gap-3">
-          {["08:00", "14:00", "21:00"].map((slot) => (
+          {med.times.map((slot) => (
             <button
               key={slot}
-              aria-pressed={med.times.includes(slot)}
-              onClick={() => {
-                const next = med.times.includes(slot) ? med.times.filter((s) => s !== slot) : [...med.times, slot].sort();
-                const updated = { ...med, times: next, synced: false };
-                setMed(updated);
-                void saveMedicine(updated);
-              }}
-              className={`text-xl px-5 py-4 rounded-xl border-2 font-semibold ${med.times.includes(slot) ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-line)]"}`}
+              aria-pressed={true}
+              aria-label={`${localizeNumber(slot, lang)} — ${t(lang, "remove")}`}
+              onClick={() => patch({ times: med.times.filter((s) => s !== slot) })}
+              className="text-xl px-5 py-4 rounded-xl border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] font-semibold"
             >
-              {slot}
+              {localizeNumber(slot, lang)}
             </button>
           ))}
+          {["08:00", "14:00", "21:00"]
+            .filter((s) => !med.times.includes(s))
+            .map((slot) => (
+              <button
+                key={slot}
+                aria-pressed={false}
+                onClick={() => patch({ times: [...med.times, slot].sort() })}
+                className="text-xl px-5 py-4 rounded-xl border-2 border-dashed border-[var(--color-line)] text-[var(--color-ink-secondary)] font-semibold"
+              >
+                + {localizeNumber(slot, lang)}
+              </button>
+            ))}
+        </div>
+        <div className="flex gap-3">
+          <input
+            type="time"
+            value={newTime}
+            onChange={(e) => setNewTime(e.target.value)}
+            aria-label={t(lang, "addTime")}
+            className="flex-1 min-w-0 text-xl px-4 py-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-line)]"
+          />
+          <button
+            onClick={addTime}
+            disabled={!/^\d{1,2}:\d{2}$/.test(newTime.trim())}
+            className="shrink-0 text-lg font-bold px-5 rounded-xl bg-[var(--color-surface-muted)] disabled:opacity-40"
+          >
+            {t(lang, "addBtn")}
+          </button>
         </div>
 
         {!confirming ? (

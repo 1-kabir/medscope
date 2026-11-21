@@ -55,11 +55,9 @@ export default function MedicineListScreen({
 
   return (
     <div className="pb-28">
-      <header className="px-6 pt-8 pb-4 flex items-center justify-between">
+      {/* History is a tab; a second History button here only added noise. */}
+      <header className="px-6 pt-8 pb-4">
         <h1 className="text-3xl font-bold">{t(lang, "medicines")}</h1>
-        <button onClick={onOpenHistory} className="text-lg font-semibold text-[var(--color-accent)] px-4 py-3 rounded-xl">
-          {t(lang, "history")}
-        </button>
       </header>
 
       {missed.length > 0 && (
@@ -87,10 +85,12 @@ export default function MedicineListScreen({
                     void setDeviceName(g.elderId, name.trim()).then(() => setDevices([...devices, { id: g.elderId, householdId: "", role: "elder", name: name.trim() }]));
                   }
                 }}
-                className="text-sm text-[var(--color-accent)] px-2 py-1"
-                aria-label="Rename"
+                className="text-[var(--color-accent)] px-2 py-2 -mr-1"
+                aria-label={t(lang, "rename")}
               >
-                ✎
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+                </svg>
               </button>
             </div>
             {g.meds.map((m) => {
@@ -114,7 +114,13 @@ export default function MedicineListScreen({
                         : days !== null
                           ? t(lang, "daysLeft", { n: localizeNumber(days, lang) })
                           : ""}
-                      {low ? " ⚠" : ""}
+                      {low && (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="inline-block ml-1 -mt-0.5">
+                          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                          <line x1="12" y1="9" x2="12" y2="13" />
+                          <line x1="12" y1="17" x2="12.01" y2="17" />
+                        </svg>
+                      )}
                     </p>
                   </div>
                   <span className="text-[var(--color-ink-tertiary)] pt-2" aria-hidden="true">›</span>
