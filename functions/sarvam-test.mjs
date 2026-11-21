@@ -1,6 +1,6 @@
 // Minimal Sarvam smoke test: one chat completion, printed.
 // Reads SARVAM_API_KEY from the environment — never hardcoded, never printed.
-import Sarvam from "sarvamai";
+import { SarvamAIClient } from "sarvamai";
 
 const apiKey = process.env.SARVAM_API_KEY;
 if (!apiKey) {
@@ -8,10 +8,10 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const client = new Sarvam({ apiCredentials: apiKey });
+const client = new SarvamAIClient({ apiCredentials: apiKey });
 
 const reply = await client.chat.completions({
-  model: "sarvam-m",
+  model: "sarvam-105b-conversations",
   messages: [
     { role: "user", content: "Reply with exactly: MedscopeOne is ready." },
   ],
