@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getSettings, setSetting, createHousehold } from "./db";
+import { getSettings, setSetting, createHousehold, registerDevice } from "./db";
 import type { Lang } from "./i18n";
 import LanguageScreen from "./screens/LanguageScreen";
 import ModeScreen from "./screens/ModeScreen";
@@ -48,8 +48,10 @@ export default function App() {
           const s = await getSettings();
           if (!s.householdId) {
             // Elder devices always have a household. Family devices link by code.
-            if (mode === "elder") await createHousehold();
-            else {
+            if (mode === "elder") {
+              await createHousehold();
+              await registerDevice("elder");
+            } else {
               setView("link");
               return;
             }
@@ -61,7 +63,16 @@ export default function App() {
   }
 
   if (view === "link") {
-    return <LinkScreen lang={lang} onLinked={() => { void setSetting("mode", "family"); setView("family"); }} />;
+    return (
+      <LinkScreen
+        lang={lang}
+        onLinked={() => {
+          void setSetting("mode", "family");
+          void registerDevice("family");
+          setView("family");
+        }}
+      />
+    );
   }
 
   if (view === "elder") return <ElderDoseScreen lang={lang} />;

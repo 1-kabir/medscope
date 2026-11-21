@@ -6,6 +6,7 @@ import type { Lang } from "./i18n";
 
 export type Medicine = {
   id: string;
+  elderId?: string; // deviceKey of the elder who takes this medicine; auto-filled for the local device
   nickname: string;
   name: string;
   strength: string;
@@ -19,12 +20,20 @@ export type Medicine = {
 export type DoseLog = {
   id: string;
   medicineId: string;
+  elderId?: string;
   nickname: string;
   slot: string; // "08:00"
   date: string; // "2026-11-21"
   status: "taken" | "missed" | "deferred";
   at: number;
   synced: boolean;
+};
+
+export type DeviceInfo = {
+  id: string; // deviceKey
+  householdId: string;
+  role: "elder" | "family";
+  name: string;
 };
 
 export type Contact = {
@@ -67,6 +76,9 @@ function open(): Promise<IDBDatabase> {
         if (!db.objectStoreNames.contains("settings")) {
           db.createObjectStore("settings", { keyPath: "key" });
         }
+        if (!db.objectStoreNames.contains("devices")) {
+          db.createObjectStore("devices", { keyPath: "id" });
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -99,6 +111,10 @@ export async function listMedicines(): Promise<Medicine[]> {
 }
 
 export async function saveMedicine(m: Medicine): Promise<void> {
+  if (!m.elderId) {
+    const s = await getSettings();
+    m.elderId = s.deviceKey;
+  }
   await put("medicines", m);
   queueSync(Collections.medicines, m.id, medicineToDoc(m));
 }
@@ -111,6 +127,10 @@ export async function deleteMedicine(id: string): Promise<void> {
 // ---- Dose logs ----
 
 export async function logDose(l: DoseLog): Promise<void> {
+  if (!l.elderId) {
+    const s = await getSettings();
+    l.elderId = s.deviceKey;
+  }
   await put("taken", l);
   // decrement stock locally
   const medicines = await listMedicines();
@@ -221,7 +241,7 @@ function queueSync(collection: string, id: string, doc: Record<string, unknown>)
 
 export function medicineToDoc(m: Medicine): Record<string, unknown> {
   return {
-    deviceId: undefined, // filled at drain time
+    elderId: m.elderId ?? "",
     nickname: m.nickname,
     name: m.name,
     strength: m.strength,
@@ -234,6 +254,7 @@ export function medicineToDoc(m: Medicine): Record<string, unknown> {
 
 export function logToDoc(l: DoseLog): Record<string, unknown> {
   return {
+    elderId: l.elderId ?? "",
     nickname: l.nickname,
     medicineId: l.medicineId,
     slot: l.slot,
@@ -245,6 +266,96 @@ export function logToDoc(l: DoseLog): Record<string, unknown> {
 
 export function contactToDoc(c: Contact): Record<string, unknown> {
   return { name: c.name, relation: c.relation, whatsapp: c.whatsapp };
+}
+
+// ---- Multi-elder households ----
+// A household may hold several elder devices and several family devices.
+// Medicines/logs carry elderId (= elder deviceKey); family phones pull the
+// whole household and group the UI per elder. Devices register themselves so
+// names and roles can be resolved across devices.
+
+export async function registerDevice(role: "elder" | "family"): Promise<void> {
+  const s = await getSettings();
+  if (!s.householdId) return;
+  const existing = await getSetting<string>("deviceName");
+  const info: DeviceInfo = { id: s.deviceKey, householdId: s.householdId, role, name: existing ?? (role === "elder" ? "" : "") };
+  await put("devices", info);
+  queueSync(Collections.devices, info.id, { role: info.role, name: info.name });
+}
+
+export async function setDeviceName(deviceId: string, name: string): Promise<void> {
+  const db = await open();
+  const store = db.transaction("devices", "readwrite").objectStore("devices");
+  const row = await reqAs(store.get(deviceId)) as DeviceInfo | undefined;
+  if (row) {
+    row.name = name;
+    await put("devices", row);
+  } else {
+    const s = await getSettings();
+    await put("devices", { id: deviceId, householdId: s.householdId ?? "", role: "elder", name });
+  }
+  queueSync(Collections.devices, deviceId, { name });
+}
+
+export async function listDevices(): Promise<DeviceInfo[]> {
+  return getAll<DeviceInfo>("devices");
+}
+
+// Pull the household's shared data into the local store. Remote wins for
+// medicines (the elder's device is the truth for schedules); logs merge by id.
+export async function pullHousehold(): Promise<void> {
+  const s = await getSettings();
+  if (!s.householdId || !navigator.onLine) return;
+  try {
+    const [medRes, logRes, devRes] = await Promise.all([
+      databases.listDocuments(DATABASE_ID, Collections.medicines, [Query.equal("householdId", s.householdId), Query.limit(100)]),
+      databases.listDocuments(DATABASE_ID, Collections.takenLogs, [Query.equal("householdId", s.householdId), Query.limit(100)]),
+      databases.listDocuments(DATABASE_ID, Collections.devices, [Query.equal("householdId", s.householdId), Query.limit(100)]),
+    ]);
+
+    for (const d of medRes.documents as unknown as Record<string, unknown>[]) {
+      const m: Medicine = {
+        id: String(d.$id),
+        elderId: String(d.elderId ?? ""),
+        nickname: String(d.nickname ?? ""),
+        name: String(d.name ?? ""),
+        strength: String(d.strength ?? ""),
+        instruction: String(d.instruction ?? ""),
+        times: JSON.parse(String(d.times ?? "[]")) as string[],
+        tabletsLeft: Number(d.tabletsLeft ?? 0),
+        createdAt: Number(d.createdAt ?? 0),
+        synced: true,
+      };
+      await put("medicines", m);
+    }
+
+    for (const d of logRes.documents as unknown as Record<string, unknown>[]) {
+      const l: DoseLog = {
+        id: String(d.$id),
+        medicineId: String(d.medicineId ?? ""),
+        elderId: String(d.elderId ?? ""),
+        nickname: String(d.nickname ?? ""),
+        slot: String(d.slot ?? ""),
+        date: String(d.date ?? ""),
+        status: (d.status as DoseLog["status"]) ?? "missed",
+        at: Number(d.at ?? 0),
+        synced: true,
+      };
+      await put("taken", l);
+    }
+
+    for (const d of devRes.documents as unknown as Record<string, unknown>[]) {
+      const info: DeviceInfo = {
+        id: String(d.$id),
+        householdId: String(d.householdId ?? s.householdId),
+        role: (d.role as DeviceInfo["role"]) ?? "elder",
+        name: String(d.name ?? ""),
+      };
+      await put("devices", info);
+    }
+  } catch {
+    /* offline or collections not ready — local data still works */
+  }
 }
 
 async function drainSync(): Promise<void> {
@@ -259,7 +370,13 @@ async function drainSync(): Promise<void> {
         await databases.createDocument(DATABASE_ID, item.collection, item.id, doc);
         syncQueue.shift();
       } catch {
-        break; // retry later (offline, or document exists)
+        // Document probably exists (a local update, e.g. stock change): upsert.
+        try {
+          await databases.updateDocument(DATABASE_ID, item.collection, item.id, doc);
+          syncQueue.shift();
+        } catch {
+          break; // offline or collection not ready — retry later
+        }
       }
     }
   } finally {
