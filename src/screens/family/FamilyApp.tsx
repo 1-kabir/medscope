@@ -3,7 +3,7 @@ import { t, localizeNumber, type Lang } from "../../i18n";
 import { subscribeSync, type SyncState } from "../../db";
 import MedicineListScreen from "./MedicineListScreen";
 import HistoryScreen from "./HistoryScreen";
-import FamilyAlertsScreen from "./FamilyAlertsScreen";
+import MembersScreen from "./MembersScreen";
 import StockScreen from "./StockScreen";
 import SettingsScreen from "./SettingsScreen";
 
@@ -91,7 +91,7 @@ export default function FamilyApp({
         ) : tab === "history" ? (
           <HistoryScreen lang={lang} />
         ) : tab === "family" ? (
-          <FamilyAlertsScreen lang={lang} />
+          <MembersScreen lang={lang} defaultRole="family" />
         ) : tab === "stock" ? (
           <StockScreen lang={lang} />
         ) : (

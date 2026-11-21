@@ -3,7 +3,7 @@ import { listMedicines, logDose, undoDose, listContacts, logsByDate, setSetting,
 import { t, localizeNumber, LANGUAGES, type Lang } from "../i18n";
 import { stopSpeaking, useSpeaker } from "../speech";
 import AddMedicineFlow from "./family/AddMedicineFlow";
-import ElderContactsScreen from "./ElderContactsScreen";
+import MembersScreen from "./family/MembersScreen";
 
 type Dose = { med: Medicine; slot: string };
 
@@ -292,7 +292,7 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
   }
 
   if (managingContacts) {
-    return <ElderContactsScreen lang={lang} onBack={() => { setManagingContacts(false); void refresh(); }} />;
+    return <MembersScreen lang={lang} defaultRole="family" onChanged={() => { void refresh(); }} />;
   }
 
   // Your name: the other phones label this person's medicines with it, so the
