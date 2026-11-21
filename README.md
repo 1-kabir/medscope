@@ -62,18 +62,52 @@ sync target — the UI never waits on the network.
 - Settings: language, phone-for switch, **optional** Backup & restore.
 
 ### Escalation (automatic, the elder does nothing)
-`checker` runs on a 10-minute schedule. For each household: any dose 30+ min
-past due with no taken log is marked missed, the family is WhatsApp'd a
-personalized text (works when the recipient has messaged the test number within
-24h), falling back to a template message when the customer-service window is
-closed. 30 minutes after that, Sarvam places a voice call speaking the alert in
-Bengali.
+`checker` runs on a 10-minute schedule (Asia/Kolkata). For each household: any
+dose 30+ min past due with no taken log is marked missed, every family member
+with a WhatsApp number is messaged (a personalized text inside the 24-hour
+customer-service window, a template message outside it), and 30 minutes after
+that Sarvam places a voice call speaking the alert in Bengali. Failed sends
+retry on later runs (up to 6 attempts); a dose taken late stops the alerts.
+
+### The people model: one concept, every permutation
+
+A **household** is a family — one 6-digit code, any number of people. Every
+person is a **member**:
+
+```
+members: { id, householdId, role: elder | family, name, phone,
+           deviceKey (the device claiming this elder; null = unclaimed),
+           pauseUntil (elders) }
+```
+
+Every permutation is the same data shape:
+
+| Scenario | What exists |
+|---|---|
+| Elder alone, no family | household with one `elder` member |
+| Elder + one family member | `elder` + `family` member (with phone) |
+| Family with several elders | one household, multiple `elder` members |
+| Several family members watching | multiple `family` members (all get alerted) |
+
+Consequences that removed the clutter:
+- **Family members ARE the emergency contacts.** There is no separate contacts
+  list and no separate contacts UI — the member list is it, rendered by the
+  same `MembersScreen` in both modes (elder gear and family tab).
+- **Escalation targets** = members with `role: family` and a phone. All of them.
+- **A second elder joins an existing family**: their phone enters the household
+  code and claims an unclaimed `elder` member the family added.
+- **Medicines** carry `elderId` = the owning elder *member* id; the owner picker
+  appears only when the household has more than one elder.
+- The old `contacts` and `devices` tables are retired (kept in Appwrite for
+  compatibility, no longer read); `functions/migrate-to-members.cjs` moved
+  their data into `members`.
 
 ### Data transfer between phones (optional, hidden from onboarding)
-Family Settings → Backup & restore: sign in with phone (SMS OTP) or
-email/password. "Save backup" snapshots device identity + household + medicines
-+ contacts into a user-owned row (row-level permissions). On a new phone, sign
-in and restore — the new phone *becomes* the old device, elder identity included.
+Family Settings → Backup & restore: sign in with phone (number + password —
+this Appwrite has no SMS provider, so the number maps to an internal account)
+or email. "Save backup" snapshots device identity + household + medicines +
+members into a user-owned row (row-level permissions). On a new phone, sign in
+and restore — the new phone *becomes* the old device, elder identity included.
 
 ## Languages
 Bengali (default), Hindi, English — chosen at first launch, switchable later in

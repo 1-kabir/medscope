@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { logsSince, listDevices, logDose, deleteLog, listMedicines, isPaused, type DoseLog, type DeviceInfo } from "../../db";
+import { logsSince, listMembers, logDose, deleteLog, listMedicines, isPaused, type DoseLog, type Member } from "../../db";
 import { t, localizeNumber, type Lang } from "../../i18n";
 
 // A tab, not a pushed screen: the navbar is the way back, so no Back arrow.
 export default function HistoryScreen({ lang }: { lang: Lang }) {
   const [range, setRange] = useState<"today" | "week">("today");
   const [logs, setLogs] = useState<DoseLog[]>([]);
-  const [devices, setDevices] = useState<DeviceInfo[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
 
   useEffect(() => {
     void logsSince(7).then(setLogs);
-    void listDevices().then(setDevices);
+    void listMembers().then(setMembers);
     void isPaused().then(setPausedState);
   }, []);
 
@@ -32,7 +32,10 @@ export default function HistoryScreen({ lang }: { lang: Lang }) {
   }
 
   const multiElder = new Set(logs.map((l) => l.elderId)).size > 1;
-  const elderName = (id?: string) => (id ? devices.find((d) => d.id === id)?.name : undefined);
+  // Logs may reference the member id (new) or the elder's deviceKey (legacy);
+  // the migrated member row carries both.
+  const elderName = (id?: string) =>
+    id ? members.find((m) => m.id === id || m.deviceKey === id)?.name : undefined;
 
   const shown = useMemo(() => {
     if (range === "today") {

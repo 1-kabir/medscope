@@ -533,9 +533,8 @@ export function logToDoc(l: DoseLog): Record<string, unknown> {
   };
 }
 
-export function contactToDoc(c: Contact): Record<string, unknown> {
-  return { name: c.name, relation: c.relation, whatsapp: c.whatsapp };
-}
+// (contactToDoc and the contacts-table write path were retired — members are
+// the single directory; legacy payloads are mapped on restore.)
 
 // ---- Device ↔ member binding ----
 // Registration creates/claims this device's member. Names live on the member;
@@ -585,17 +584,6 @@ export async function setMemberName(memberId: string, name: string): Promise<voi
       synced: false,
     });
   }
-}
-
-export async function listDevices(): Promise<DeviceInfo[]> {
-  // Compatibility shim over members — grouping code reads devices today.
-  const members = await listMembers();
-  return members.map((m) => ({
-    id: m.id,
-    householdId: m.householdId,
-    role: m.role,
-    name: m.name,
-  }));
 }
 
 // ---- Who am I ----
