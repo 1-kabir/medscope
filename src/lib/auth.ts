@@ -1,5 +1,5 @@
 import { account, ID, Permission, Role, tablesDB, Collections, DATABASE_ID, Query } from "./appwrite";
-import { listMedicines, listContacts, getSettings, normalizePhone, type Medicine, type Contact } from "../db";
+import { listMedicines, listMembers, getSettings, normalizePhone, type Medicine, type Member } from "../db";
 
 // Optional account auth (phone SMS + email/password). Entirely hidden from
 // onboarding — its only job is "backup this device's data, restore on another
@@ -71,7 +71,8 @@ type BackupPayload = {
   deviceKey: string;
   householdId: string | null;
   medicines: Medicine[];
-  contacts: Contact[];
+  members?: Member[];
+  contacts?: { id: string; name: string; whatsapp: string }[]; // legacy payloads
   savedAt: number;
 };
 
@@ -80,12 +81,12 @@ type BackupPayload = {
 export async function saveBackup(): Promise<void> {
   const info = await getAccountInfo();
   if (!info) throw new Error("not signed in");
-  const [medicines, contacts, settings] = await Promise.all([listMedicines(), listContacts(), getSettings()]);
+  const [medicines, members, settings] = await Promise.all([listMedicines(), listMembers(), getSettings()]);
   const payload: BackupPayload = {
     deviceKey: settings.deviceKey,
     householdId: settings.householdId,
     medicines,
-    contacts,
+    members,
     savedAt: Date.now(),
   };
   await tablesDB.createRow({
@@ -115,7 +116,7 @@ export async function listBackups(): Promise<{ id: string; savedAt: number; hous
   });
 }
 
-export type RestoreResult = { householdId: string | null; medicines: number; contacts: number };
+export type RestoreResult = { householdId: string | null; medicines: number; members: number };
 
 // Restore happens in the appwrite lib because it needs the table; it writes
 // back through db.ts import helpers so local-first stays intact.

@@ -38,6 +38,22 @@ export type DeviceInfo = {
   name: string;
 };
 
+// The single directory of people in a household. Replaces the contacts table
+// (family numbers) and the directory role of the devices table.
+//  - role "elder": a person who takes medicines. deviceKey = the device
+//    currently claiming them; null means nobody's phone is set up yet.
+//  - role "family": a person who gets called/texted. phone = WhatsApp number.
+export type Member = {
+  id: string;
+  householdId: string;
+  role: "elder" | "family";
+  name: string;
+  phone: string; // family members only
+  deviceKey: string; // elder members only, "" when unclaimed
+  pauseUntil: number; // epoch ms, 0 = not paused (elder members only)
+  synced: boolean;
+};
+
 export type Contact = {
   id: string;
   name: string;
@@ -56,7 +72,7 @@ export type Settings = {
 };
 
 const DB_NAME = "medscope";
-const DB_VERSION = 3; // v3: pause settings in settings store (no-op migration); added dosePerSlot/units fields
+const DB_VERSION = 4; // v4: added "members" store — the single people directory
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -82,6 +98,9 @@ function open(): Promise<IDBDatabase> {
         }
         if (!db.objectStoreNames.contains("devices")) {
           db.createObjectStore("devices", { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains("members")) {
+          db.createObjectStore("members", { keyPath: "id" });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -189,7 +208,99 @@ export async function logsSince(days: number): Promise<DoseLog[]> {
   return all.filter((l) => l.at >= cutoff);
 }
 
-// ---- Contacts ----
+// ---- Members: the single source of truth for people in the household ----
+// Family members are the emergency contacts; elders own medicines. There is
+// no separate contacts list and the devices table no longer carries names.
+
+export async function listMembers(): Promise<Member[]> {
+  return getAll<Member>("members");
+}
+
+export async function saveMember(m: Member): Promise<void> {
+  await put("members", m);
+  queueSync(Collections.members, m.id, memberToDoc(m));
+}
+
+export async function deleteMember(id: string): Promise<void> {
+  const db = await open();
+  await reqAs(db.transaction("members", "readwrite").objectStore("members").delete(id));
+  // Server-side delete is fire-and-forget; the local store is what the UI sees.
+  void tablesDB.deleteRow({ databaseId: DATABASE_ID, tableId: Collections.members, rowId: id }).catch(() => {});
+}
+
+export function memberToDoc(m: Member): Record<string, unknown> {
+  return {
+    role: m.role,
+    name: m.name,
+    phone: m.role === "family" ? m.phone : "",
+    deviceKey: m.role === "elder" ? m.deviceKey : "",
+    pauseUntil: m.role === "elder" ? m.pauseUntil : 0,
+  };
+}
+
+function rowToMember(d: Record<string, unknown>, householdId: string): Member {
+  return {
+    id: String(d.$id),
+    householdId: String(d.householdId ?? householdId),
+    role: (d.role as Member["role"]) === "family" ? "family" : "elder",
+    name: String(d.name ?? ""),
+    phone: String(d.phone ?? ""),
+    deviceKey: String(d.deviceKey ?? ""),
+    pauseUntil: Number(d.pauseUntil ?? 0),
+    synced: true,
+  };
+}
+
+// My member identity: which member of the household this device claims.
+export async function myMemberId(): Promise<string | null> {
+  return getSetting<string>("myMemberId");
+}
+
+export async function setMyMemberId(id: string | null): Promise<void> {
+  await setSetting("myMemberId", id);
+}
+
+// Elder members no device has claimed — the choices for a phone joining a
+// family that already has elders listed remotely.
+export async function unclaimedElders(householdId: string): Promise<Member[]> {
+  try {
+    const res = await tablesDB.listRows({
+      databaseId: DATABASE_ID,
+      tableId: Collections.members,
+      queries: [Query.equal("householdId", householdId), Query.limit(50)],
+    });
+    return (res.rows as unknown as Record<string, unknown>[])
+      .map((d) => rowToMember(d, householdId))
+      .filter((m) => m.role === "elder" && !m.deviceKey);
+  } catch {
+    return [];
+  }
+}
+
+export async function listContacts(): Promise<Contact[]> {
+  // Compatibility shim over members: family members ARE the contacts.
+  const members = await listMembers();
+  return members
+    .filter((m) => m.role === "family" && m.phone)
+    .map((m) => ({ id: m.id, name: m.name, relation: "", whatsapp: m.phone, synced: m.synced }));
+}
+
+export async function saveContact(c: Contact): Promise<void> {
+  // Legacy path — writes a family member under the hood.
+  const s = await getSettings();
+  const existing = (await listMembers()).find((m) => m.id === c.id);
+  const m: Member = {
+    id: c.id,
+    householdId: s.householdId ?? "",
+    role: "family",
+    name: c.name,
+    phone: c.whatsapp,
+    deviceKey: "",
+    pauseUntil: 0,
+    synced: false,
+  };
+  await saveMember(existing ? { ...m, synced: existing.synced } : m);
+}
 
 // One canonical form: digits only, with the country code. The elder types
 // "91233 13155"; WhatsApp needs "919123313155". Doing it at save time means
@@ -210,16 +321,6 @@ export function formatPhone(e164: string): string {
     return `+${DEFAULT_COUNTRY} ${d.slice(2, 7)} ${d.slice(7)}`;
   }
   return d ? `+${d}` : "";
-}
-
-export async function listContacts(): Promise<Contact[]> {
-  return getAll<Contact>("contacts");
-}
-
-export async function saveContact(c: Contact): Promise<void> {
-  const saved = { ...c, whatsapp: normalizePhone(c.whatsapp) || c.whatsapp };
-  await put("contacts", saved);
-  queueSync(Collections.contacts, saved.id, contactToDoc(saved));
 }
 
 // ---- Settings ----
@@ -255,21 +356,26 @@ export async function setPause(until: number | null): Promise<void> {
   void pushPauseState(until);
 }
 
-// Best-effort: the checker reads pauseUntil off the elder's device row and stays
-// quiet while it is in the future. Deliberately not queued — an unprovisioned
-// attribute or an offline phone must never block the rest of the sync queue.
+// Best-effort: the checker reads pauseUntil off my member row and stays quiet
+// while it is in the future. Deliberately not queued — an offline phone must
+// never block the rest of the sync queue.
 async function pushPauseState(until: number | null): Promise<void> {
   try {
     const s = await getSettings();
-    if (!s.householdId || !navigator.onLine) return;
+    const myId = await myMemberId();
+    if (!s.householdId || !myId || !navigator.onLine) return;
+    // Local member first, then the server row directly (not queued).
+    const members = await listMembers();
+    const me = members.find((m) => m.id === myId);
+    if (me) await saveMember({ ...me, pauseUntil: until ?? 0, synced: me.synced });
     await tablesDB.updateRow({
       databaseId: DATABASE_ID,
-      tableId: Collections.devices,
-      rowId: s.deviceKey,
+      tableId: Collections.members,
+      rowId: myId,
       data: { pauseUntil: until ?? 0 },
     });
   } catch {
-    /* attribute not provisioned yet, or offline */
+    /* offline, or member row not created yet */
   }
 }
 
@@ -284,28 +390,47 @@ export async function isPaused(): Promise<boolean> {
 }
 
 // ---- Backup restore (used by family Settings → Backup & restore) ----
-// Adopts another device's identity: deviceKey, household, medicines, contacts.
+// Adopts another device's identity: deviceKey, household, medicines, members.
 // Local rows that don't exist in the backup are kept; backup rows win on id.
+// Legacy payloads carrying `contacts` are mapped to family members.
 
 export type BackupApply = {
   deviceKey: string;
   householdId: string | null;
   medicines: Medicine[];
-  contacts: Contact[];
+  members?: Member[];
+  contacts?: { id: string; name: string; whatsapp: string }[]; // legacy
 };
 
-export async function applyBackup(b: BackupApply): Promise<{ householdId: string | null; medicines: number; contacts: number }> {
+export async function applyBackup(b: BackupApply): Promise<{ householdId: string | null; medicines: number; members: number }> {
   await setSetting("deviceKey", b.deviceKey);
   await setSetting("householdId", b.householdId);
   for (const m of b.medicines || []) {
     await put("medicines", { ...m, synced: false });
     queueSync(Collections.medicines, m.id, medicineToDoc({ ...m, synced: false }));
   }
+  const legacyMembers: Member[] = (b.members || []).map((m) => ({ ...m, synced: false }));
   for (const c of b.contacts || []) {
-    await put("contacts", { ...c, synced: false });
-    queueSync(Collections.contacts, c.id, contactToDoc({ ...c, synced: false }));
+    legacyMembers.push({
+      id: c.id,
+      householdId: b.householdId ?? "",
+      role: "family",
+      name: c.name,
+      phone: c.whatsapp,
+      deviceKey: "",
+      pauseUntil: 0,
+      synced: false,
+    });
   }
-  return { householdId: b.householdId, medicines: (b.medicines || []).length, contacts: (b.contacts || []).length };
+  for (const m of legacyMembers) {
+    await put("members", m);
+    queueSync(Collections.members, m.id, memberToDoc(m));
+  }
+  return {
+    householdId: b.householdId,
+    medicines: (b.medicines || []).length,
+    members: legacyMembers.length,
+  };
 }
 
 // ---- Household linking ----
@@ -412,69 +537,103 @@ export function contactToDoc(c: Contact): Record<string, unknown> {
   return { name: c.name, relation: c.relation, whatsapp: c.whatsapp };
 }
 
-// ---- Multi-elder households ----
-// A household may hold several elder devices and several family devices.
-// Medicines/logs carry elderId (= elder deviceKey); family phones pull the
-// whole household and group the UI per elder. Devices register themselves so
-// names and roles can be resolved across devices.
+// ---- Device ↔ member binding ----
+// Registration creates/claims this device's member. Names live on the member;
+// the devices row is only a binding (and, later, a push-token holder).
 
 export async function registerDevice(role: "elder" | "family"): Promise<void> {
   const s = await getSettings();
-  const existing = await getSetting<string>("deviceName");
   if (!s.householdId) return;
-  const info: DeviceInfo = { id: s.deviceKey, householdId: s.householdId, role, name: existing ?? "" };
-  await put("devices", info);
-  queueSync(Collections.devices, info.id, { role: info.role, name: info.name });
+  const existingName = (await getSetting<string>("deviceName")) ?? "";
+  const members = await listMembers();
+  const mine = members.find((m) => m.deviceKey === s.deviceKey);
+  if (mine) {
+    if (mine.role !== role) await saveMember({ ...mine, role, synced: false });
+    await setMyMemberId(mine.id);
+    return;
+  }
+  const m: Member = {
+    id: crypto.randomUUID(),
+    householdId: s.householdId,
+    role,
+    name: existingName,
+    phone: "",
+    deviceKey: s.deviceKey,
+    pauseUntil: 0,
+    synced: false,
+  };
+  await saveMember(m);
+  await put("devices", { id: s.deviceKey, householdId: s.householdId, role, name: existingName });
+  await setMyMemberId(m.id);
 }
 
-export async function setDeviceName(deviceId: string, name: string): Promise<void> {
-  const db = await open();
-  const store = db.transaction("devices", "readwrite").objectStore("devices");
-  const row = await reqAs(store.get(deviceId)) as DeviceInfo | undefined;
-  if (row) {
-    row.name = name;
-    await put("devices", row);
+export async function setMemberName(memberId: string, name: string): Promise<void> {
+  const members = await listMembers();
+  const m = members.find((x) => x.id === memberId);
+  if (m) {
+    await saveMember({ ...m, name: name.trim().slice(0, 40), synced: false });
   } else {
     const s = await getSettings();
-    await put("devices", { id: deviceId, householdId: s.householdId ?? "", role: "elder", name });
+    await saveMember({
+      id: memberId,
+      householdId: s.householdId ?? "",
+      role: "elder",
+      name: name.trim().slice(0, 40),
+      phone: "",
+      deviceKey: memberId === s.deviceKey ? s.deviceKey : "",
+      pauseUntil: 0,
+      synced: false,
+    });
   }
-  queueSync(Collections.devices, deviceId, { name });
 }
 
 export async function listDevices(): Promise<DeviceInfo[]> {
-  return getAll<DeviceInfo>("devices");
+  // Compatibility shim over members — grouping code reads devices today.
+  const members = await listMembers();
+  return members.map((m) => ({
+    id: m.id,
+    householdId: m.householdId,
+    role: m.role,
+    name: m.name,
+  }));
 }
 
 // ---- Who am I ----
-// A name on the device row is what the other phone shows ("Kabir's medicines"
-// instead of "Elder 1"), so both the elder and a family member can set it.
+// The member name is what the other phones show ("Kabir's medicines" instead
+// of "Elder 1"), so both the elder and a family member can set it.
 
 export async function getMyName(): Promise<string> {
+  const myId = await myMemberId();
+  if (myId) {
+    const m = (await listMembers()).find((x) => x.id === myId);
+    if (m?.name) return m.name;
+  }
   return (await getSetting<string>("deviceName")) ?? "";
 }
 
 export async function setMyName(name: string): Promise<void> {
   const clean = name.trim().slice(0, 40);
-  const s = await getSettings();
-  const mode = await getSetting<"elder" | "family">("mode");
   await setSetting("deviceName", clean);
-  await put("devices", { id: s.deviceKey, householdId: s.householdId ?? "", role: mode ?? "family", name: clean });
-  queueSync(Collections.devices, s.deviceKey, { name: clean });
+  const myId = await myMemberId();
+  if (myId) {
+    await setMemberName(myId, clean);
+    return;
+  }
+  // No member yet (e.g. named before household join): keep the local setting;
+  // registerDevice() picks it up when the household exists.
 }
 
 // Pull the household's shared data into the local store. Remote wins for
 // medicines (the elder's device is the truth for schedules); logs merge by id.
+// Members are the shared people roster — both surfaces see the same names.
 export async function pullHousehold(): Promise<void> {
   const s = await getSettings();
   if (!s.householdId || !navigator.onLine) return;
   try {
-    const [medRes, logRes, devRes, conRes] = await Promise.all([
+    const [medRes, logRes, memRes] = await Promise.all([
       tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.medicines, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
       tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.takenLogs, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
-      tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.devices, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
-      // Contacts are the shared family roster: whoever the family adds is in
-      // the elder's phone book, and whoever the elder adds shows up for family.
-      tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.contacts, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
+      tablesDB.listRows({ databaseId: DATABASE_ID, tableId: Collections.members, queries: [Query.equal("householdId", s.householdId), Query.limit(100)] }),
     ]);
 
     for (const d of medRes.rows as unknown as Record<string, unknown>[]) {
@@ -510,26 +669,8 @@ export async function pullHousehold(): Promise<void> {
       await put("taken", l);
     }
 
-    for (const d of conRes.rows as unknown as Record<string, unknown>[]) {
-      const c: Contact = {
-        id: String(d.$id),
-        name: String(d.name ?? ""),
-        relation: String(d.relation ?? ""),
-        whatsapp: String(d.whatsapp ?? ""),
-        synced: true,
-      };
-      // A contact with no number is useless as a call button; skip it.
-      if (c.whatsapp) await put("contacts", c);
-    }
-
-    for (const d of devRes.rows as unknown as Record<string, unknown>[]) {
-      const info: DeviceInfo = {
-        id: String(d.$id),
-        householdId: String(d.householdId ?? s.householdId),
-        role: (d.role as DeviceInfo["role"]) ?? "elder",
-        name: String(d.name ?? ""),
-      };
-      await put("devices", info);
+    for (const d of memRes.rows as unknown as Record<string, unknown>[]) {
+      await put("members", rowToMember(d, s.householdId));
     }
   } catch {
     /* offline or collections not ready — local data still works */

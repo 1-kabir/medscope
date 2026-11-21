@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listMedicines, logsByDate, pullHousehold, listDevices, setDeviceName, type Medicine, type DoseLog, type DeviceInfo } from "../../db";
+import { listMedicines, logsByDate, pullHousehold, listMembers, setMemberName, type Medicine, type DoseLog, type Member } from "../../db";
 import { t, localizeNumber, type Lang } from "../../i18n";
 import { useSpeaker, SpeakerIcon } from "../../speech";
 import AddMedicineFlow from "./AddMedicineFlow";
@@ -20,7 +20,7 @@ export default function MedicineListScreen({
 }) {
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [missed, setMissed] = useState<DoseLog[]>([]);
-  const [devices, setDevices] = useState<DeviceInfo[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [adding, setAdding] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const speak = useSpeaker(lang);
@@ -29,22 +29,22 @@ export default function MedicineListScreen({
     void (async () => {
       await pullHousehold();
       setMedicines(await listMedicines());
-      setDevices(await listDevices());
+      setMembers(await listMembers());
       const key = new Date().toISOString().slice(0, 10);
       setMissed((await logsByDate(key)).filter((x) => x.status === "missed"));
     })();
   }, [adding, detailId]);
 
-  // Group medicines per elder, in stable order of first appearance
+  // Group medicines per elder member, in stable order of first appearance
   const groups: { elderId: string; name: string; meds: Medicine[] }[] = [];
   for (const m of medicines) {
     const elderId = m.elderId ?? "unknown";
     let g = groups.find((x) => x.elderId === elderId);
     if (!g) {
-      const dev = devices.find((d) => d.id === elderId);
+      const member = members.find((d) => d.id === elderId);
       const idx = groups.length + 1;
       const fallback = `${lang === "en" ? "Elder" : lang === "hi" ? "बुज़ुर्ग" : "বয়স্ক"} ${idx}`;
-      g = { elderId, name: dev?.name || fallback, meds: [] };
+      g = { elderId, name: member?.name || fallback, meds: [] };
       groups.push(g);
     }
     g.meds.push(m);
@@ -82,7 +82,7 @@ export default function MedicineListScreen({
                 onClick={() => {
                   const name = window.prompt(lang === "en" ? "Name this elder" : lang === "hi" ? "बुज़ुर्ग का नाम" : "বয়স্কের নাম", g.name);
                   if (name && name.trim()) {
-                    void setDeviceName(g.elderId, name.trim()).then(() => setDevices([...devices, { id: g.elderId, householdId: "", role: "elder", name: name.trim() }]));
+                    void setMemberName(g.elderId, name.trim()).then(async () => setMembers(await listMembers()));
                   }
                 }}
                 className="text-[var(--color-accent)] px-2 py-2 -mr-1"

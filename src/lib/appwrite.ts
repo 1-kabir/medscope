@@ -23,4 +23,5 @@ export const Collections = {
   contacts: "contacts",
   alerts: "alerts",
   backups: "backups",
+  members: "members",
 } as const;
