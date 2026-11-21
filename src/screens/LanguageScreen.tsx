@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { LANGUAGES, t, type Lang } from "../i18n";
-import { speakLines } from "../speech";
+import { prefetchTTS, speak, speakLines, stopSpeaking } from "../speech";
 
 export default function LanguageScreen({
   lang,
@@ -14,10 +14,14 @@ export default function LanguageScreen({
   // The elder may not read any of these scripts. The screen says itself aloud:
   // the question, then each language's own name in its own voice.
   useEffect(() => {
-    speakLines([
+    const lines = [
       { text: t(lang as Lang, "chooseLanguage"), lang },
       ...LANGUAGES.map((l) => ({ text: l.label, lang: l.id })),
-    ]);
+    ];
+    speakLines(lines);
+    // And warm the cache so a tap plays instantly — Sarvam needs a round trip
+    // per line, which is why clicking otherwise stayed silent too long.
+    prefetchTTS(lines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -30,7 +34,9 @@ export default function LanguageScreen({
             key={l.id}
             onClick={() => {
               // Choosing is also a confirmation they can hear, in that language.
-              speakLines([{ text: l.label, lang: l.id }]);
+              // Stop the intro queue first so the tap is heard immediately.
+              stopSpeaking();
+              speak(l.label, l.id);
               onSelect(l.id);
             }}
             aria-pressed={lang === l.id}
@@ -48,7 +54,10 @@ export default function LanguageScreen({
         ))}
       </div>
       <button
-        onClick={onContinue}
+        onClick={() => {
+          stopSpeaking();
+          onContinue();
+        }}
         className="mt-10 w-full text-2xl font-bold py-6 rounded-2xl bg-[var(--color-accent)] text-white active:bg-[var(--color-accent-strong)]"
       >
         {t(lang, "continue")}

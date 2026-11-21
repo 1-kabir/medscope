@@ -1,8 +1,7 @@
 // MedscopeOne — missed-dose escalation checker.
 // Runs on a 10-minute schedule (node-16 runtime): for every household,
 //   slot + 30 min, no taken log  -> log "missed" + WhatsApp every family contact
-//   slot + 60 min, still nothing -> Sarvam voice call speaking the alert in Bengali
-// Delivery is retried on later runs until it succeeds (or the attempt cap), so a
+//// Delivery is retried on later runs until it succeeds (or the attempt cap), so a
 // failed send or a skipped cycle does not quietly drop the alert.
 // Zero dependencies; uses node:https (node-16 has no global fetch).
 
@@ -21,11 +20,9 @@ const MAX_ATTEMPTS = Number(process.env.ESCALATION_MAX_ATTEMPTS || 6);
 
 // Escalation timing, all customizable:
 //   graceMinutes      — how late a dose may go before the family is texted
-//   callAfterMinutes  — when the elder's Sarvam voice call goes out
-//   secondWarnMinutes — when family gets the second warning if still untaken
+////   secondWarnMinutes — when family gets the second warning if still untaken
 //                       (floored at 120: minimum 2 hours from the dose time)
 const GRACE_MINUTES = Number(process.env.ESCALATION_GRACE_MINUTES || 30);
-const CALL_AFTER_MINUTES = Number(process.env.ESCALATION_CALL_AFTER_MINUTES || 45);
 const SECOND_WARN_MINUTES = Math.max(120, Number(process.env.ESCALATION_SECOND_WARN_MINUTES || 120));
 
 const HEADERS = {
@@ -200,69 +197,6 @@ async function sendTemplate(to, text, slotHint, token, phoneId, forceHelloWorld)
   };
 }
 
-async function sarvamCall(to, spokenText) {
-  const key = process.env.SARVAM_API_KEY;
-  if (!key) return { skipped: "credentials not set" };
-  const r = await request("https://api.sarvam.ai/v1/call", {
-    method: "POST",
-    headers: { "api-subscription-key": key, "Content-Type": "application/json" },
-    body: JSON.stringify({ to, message: spokenText, language: "bn-IN" }),
-  });
-  return { ok: r.status >= 200 && r.status < 300, status: r.status, body: r.text.slice(0, 200) };
-}
-
-// Sarvam Voice Agent: instant outbound call to the ELDER. The agent speaks the
-// reminder in the elder's language and waits for a spoken confirmation; the
-// call outcome arrives at the voice-webhook function. Requires the agent to be
-// deployed on the rented number (see README). Falls back to the plain call API
-// when the Voice Agent env block is not configured.
-const VA = {
-  orgId: process.env.SARVAM_VA_ORG_ID || "",
-  workspaceId: process.env.SARVAM_VA_WORKSPACE_ID || "",
-  apiKey: process.env.SARVAM_VA_API_KEY || "",
-  appId: process.env.SARVAM_VA_APP_ID || "",
-  appVersion: Number(process.env.SARVAM_VA_APP_VERSION || 1),
-  connectionId: process.env.SARVAM_VA_CONNECTION_ID || "",
-  agentPhone: process.env.SARVAM_VA_AGENT_PHONE || "",
-  webhookUrl: process.env.VOICE_WEBHOOK_URL || "",
-};
-const VA_CONFIGURED = Boolean(VA.orgId && VA.workspaceId && VA.apiKey && VA.appId && VA.connectionId && VA.agentPhone);
-
-const SPOKEN_LANG = { bn: "Bengali", hi: "Hindi", en: "English" };
-
-function elderGreeting(lang, elderName, medicine) {
-  const name = elderName ? elderName + ", " : "";
-  if (lang === "hi") return `${name}${medicine} लेने का समय हो गया। क्या आपने दवा ले ली? कृपया अब दवा ले लीजिए।`;
-  if (lang === "en") return `${name}it is time for your ${medicine}. Have you taken it? Please take it now.`;
-  return `${name}${medicine} খাওয়ার সময় হয়েছে। আপনি কি ওষুধ খেয়ে নিয়েছেন? অনুগ্রহ করে এখন ওষুধটি খেয়ে নিন।`;
-}
-
-async function voiceAgentCall(to, opts) {
-  if (!VA_CONFIGURED) return sarvamCall(to, opts.greeting);
-  const body = {
-    app_config: {
-      app_id: VA.appId,
-      app_version: VA.appVersion,
-      connection_config: { connection_id: VA.connectionId, agent_phone_number: VA.agentPhone },
-      agent_variables: { elder_name: opts.elderName || "", medicine: opts.medicine, slot: opts.slot },
-      app_overrides: {
-        initial_bot_message: opts.greeting,
-        ...(SPOKEN_LANG[opts.lang] ? { initial_language_name: SPOKEN_LANG[opts.lang] } : {}),
-      },
-    },
-    user_config: { user_phone_number: to },
-    ...(VA.webhookUrl ? { webhook_config: { url: VA.webhookUrl, metadata: { medicineId: opts.medicineId, slot: opts.slot, date: opts.date, householdId: opts.householdId, elderPhone: to } } } : {}),
-  };
-  const r = await request(`${"https://apps.sarvam.ai/api/outbounds/v1/orgs/" + VA.orgId + "/workspaces/" + VA.workspaceId + "/outbounds"}`, {
-    method: "POST",
-    headers: { "X-API-Key": VA.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  let attemptId = null;
-  try { attemptId = JSON.parse(r.text).attempt_id || null; } catch { /* keep null */ }
-  return { ok: r.status >= 200 && r.status < 300, status: r.status, attemptId, via: "voice-agent", body: r.text.slice(0, 200) };
-}
-
 // One delivery attempt for one contact and channel, keyed by a stable alert ID.
 // Already-sent alerts are left alone; failed or skipped ones are tried again on
 // this run, and the attempt count is carried in the alert row.
@@ -278,7 +212,7 @@ async function deliver({ alertsById, summary, id, channel, number, text, hint, d
   if (prev) summary.retried++;
 
   const result = await send();
-  if (result.ok) summary[channel === "whatsapp" ? "whatsapp" : "calls"]++;
+  if (result.ok) summary.whatsapp++;
   else if (channel === "whatsapp") summary.whatsappFailed++;
   if (!result.ok) error(`${channel} ${number} ${result.status || result.skipped}: ${result.body || ""}`);
   if (result.messageStatus) log(`${channel} ${number}: message_status=${result.messageStatus} via ${result.via}${result.template ? " (" + result.template + ")" : ""}`);
@@ -298,7 +232,7 @@ async function deliver({ alertsById, summary, id, channel, number, text, hint, d
 }
 
 module.exports = async ({ req, res, log, error }) => {
-  const summary = { households: 0, checked: 0, missed: 0, whatsapp: 0, whatsappFailed: 0, calls: 0, retried: 0, gaveUp: 0, noNumber: 0, paused: 0 };
+  const summary = { households: 0, checked: 0, missed: 0, whatsapp: 0, whatsappFailed: 0, retried: 0, gaveUp: 0, noNumber: 0, paused: 0 };
   const date = today();
   const now = nowMinutes();
 
@@ -322,8 +256,7 @@ module.exports = async ({ req, res, log, error }) => {
     summary.households = households.length;
     log("households: " + households.length);
 
-    // A paused elder is away (wedding, hospital) — no missed log, no message,
-    // no call. The app already hides reminders; escalation has to match it.
+    // A paused elder is away (wedding, hospital) — no missed log, no message. The app already hides reminders; escalation has to match it.
     // pauseUntil lives on the elder's member row.
     const pausedMembers = new Set(allMembers.filter((m) => Number(m.pauseUntil || 0) > Date.now()).map((m) => m.$id));
     log("paused members: " + pausedMembers.size);
@@ -352,7 +285,6 @@ module.exports = async ({ req, res, log, error }) => {
       }
 
       const takenKeys = new Set(logs.filter((l) => l.status === "taken").map((l) => l.medicineId + "|" + l.slot));
-      // The elder's own phone number: the voice agent calls THEM, not family.
       const elderNumbers = (hid) =>
         [...new Set(allMembers.filter((m) => m.householdId === hid && m.role === "elder").map((m) => waNumber(m.phone)).filter(Boolean))];
 
@@ -407,45 +339,8 @@ module.exports = async ({ req, res, log, error }) => {
             });
           }
 
-          // The elder's phone gets the voice-agent call: it speaks the reminder
-          // in the elder's language and waits for a spoken confirmation. The
-          // call outcome arrives at the voice-webhook; the app is the other
-          // confirmation path.
-          if (overdue >= CALL_AFTER_MINUTES) {
-            const elderMember = allMembers.find((m) => m.id === med.elderId || m.deviceKey === med.elderId);
-            const elderLang = elderMember?.lang || "bn";
-            const greeting = elderGreeting(elderLang, elderMember?.name || "", med.nickname);
-            for (const number of elderNumbers(householdId)) {
-              const outcome = await deliver({
-                alertsById,
-                summary,
-                id: rowId("call", [med.$id, slot, date, number]),
-                channel: "call",
-                number,
-                text: greeting,
-                hint: `${date} ${slot}`,
-                data: { elderId: med.elderId || "", medicineId: med.$id, message: `${med.nickname} ${slot} voice-agent call -> ${number}`, householdId },
-                send: () => voiceAgentCall(number, {
-                  greeting,
-                  lang: elderLang,
-                  elderName: elderMember?.name || "",
-                  medicine: med.nickname,
-                  slot,
-                  date,
-                  householdId,
-                  medicineId: med.$id,
-                }),
-                log,
-                error,
-              });
-              if (outcome && outcome.attemptId) {
-                await updateRow("alerts", rowId("call", [med.$id, slot, date, number]), { message: `${med.nickname} ${slot} call attempt ${outcome.attemptId}` }).catch(() => {});
-              }
-            }
-          }
-
           // Second family warning: at least 2 hours after the dose time, and
-          // only if the elder still hasn't confirmed on the app or by voice.
+          // only if the elder still hasn't confirmed on the app.
           if (overdue >= SECOND_WARN_MINUTES) {
             const again = `MedscopeOne: STILL not taken — ${med.nickname} (${med.name}), the ${slot} dose. It has been ${Math.floor(overdue / 60)}+ hours. Please check on them now.`;
             for (const number of numbers) {

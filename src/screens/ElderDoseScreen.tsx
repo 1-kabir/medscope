@@ -5,6 +5,7 @@ import { stopSpeaking, useSpeaker } from "../speech";
 import AddMedicineFlow from "./family/AddMedicineFlow";
 import MembersScreen from "./family/MembersScreen";
 import { scheduleDoseAlarms } from "../lib/alarms";
+import { prefetchTTS } from "../speech";
 
 type Dose = { med: Medicine; slot: string };
 
@@ -108,7 +109,14 @@ export default function ElderDoseScreen({ lang, onLangChange }: { lang: Lang; on
   useEffect(() => {
     if (!medicines.length) return;
     void scheduleDoseAlarms(medicines);
-  }, [medicines]);
+    // Warm the spoken lines for the buttons on this screen — Sarvam needs a
+    // round trip, and the dose-time announcement must not wait for it.
+    prefetchTTS([
+      { text: t(lang, "timeFor"), lang },
+      { text: t(lang, "taken"), lang },
+      { text: t(lang, "remindLater"), lang },
+    ]);
+  }, [medicines, lang]);
 
   async function refresh() {
     const s = await getSettings();

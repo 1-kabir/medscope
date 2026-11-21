@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { t, type Lang } from "../i18n";
-import { speakLines } from "../speech";
+import { speakLines, prefetchTTS } from "../speech";
 
 export default function ModeScreen({
   lang,
@@ -17,10 +17,12 @@ export default function ModeScreen({
   // Reads the question and both choices once, so the screen is usable without
   // reading it. No extra button — the choices stay the only things to tap.
   useEffect(() => {
-    speakLines([
+    const lines = [
       { text: t(lang, "whoUsesPhone"), lang },
       ...options.map((o) => ({ text: o.label, lang })),
-    ]);
+    ];
+    speakLines(lines);
+    prefetchTTS(lines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

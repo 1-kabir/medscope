@@ -43,6 +43,13 @@ async function sarvamTTS(text: string, lang: Lang): Promise<string | null> {
   }
 }
 
+// Warm the cache for lines the user is about to tap or hear. Sarvam TTS takes
+// a round trip; fetching ahead means a tap plays instantly instead of after
+// the request resolves.
+export function prefetchTTS(lines: { text: string; lang: Lang }[]): void {
+  for (const line of lines) void sarvamTTS(line.text, line.lang);
+}
+
 function webSpeak(text: string, lang: Lang): void {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
   const utter = new SpeechSynthesisUtterance(text);

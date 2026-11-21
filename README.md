@@ -2,8 +2,8 @@
 
 A voice-first medicine companion for elderly people in Bengal. The elder only
 hears and taps; the family sets it up once by photographing medicine strips.
-Missed doses escalate to the family automatically — WhatsApp first, then a
-spoken phone call. Free for the elder: funded by the panchayat and the state
+Missed doses escalate to the family automatically over WhatsApp, with
+customizable timings. Free for the elder: funded by the panchayat and the state
 health department.
 
 **Reminders only.** The app never diagnoses, never suggests or changes a dose,
@@ -17,16 +17,18 @@ and never gives medical advice.
 ┌────────────────────────────────┐         ┌───────────────────────────────────┐
 │  PWA — Vite + React + TS +     │  sync   │  Appwrite (self-hosted)           │
 │  Tailwind v4, Capacitor shell  │◄───────►│  tables: medicines, taken_logs,   │
-│                                │  best-  │    devices, contacts, alerts,     │
-│  IndexedDB = source of truth   │  effort │    backups                        │
-│  Web Speech (TTS + STT)        │         │  Functions:                       │
-│  photo → ai-proxy (vision)     │         │   • checker  (cron every 10 min)  │
-└───────────────┬────────────────┘         │   • ai-proxy (HTTP, vision)       │
-                │ vision POST              └──────────────┬────────────────────┘
-                ▼ (guest execute)                         │
-     ┌──────────────────┐                                ├─► WhatsApp Cloud API v23
-     │  ai-proxy func   │──── OpenAI-compatible ────────►└─► Sarvam voice call
-     └──────────────────┘      endpoint + key (server-side only)
+│                                │  best-  │    members, alerts, backups       │
+│  IndexedDB = source of truth   │  effort │  Functions:                       │
+│  Sarvam Bulbul TTS + Saaras    │         │   • checker  (cron every 10 min)  │
+│    STT, photo → ai-proxy       │         │   • ai-proxy, sarvam-speech       │
+└───────────────┬────────────────┘         └──────────────┬────────────────────┘
+                │ vision / speech POST (guest execute)    │
+                ▼                                         │
+     ┌──────────────────────────────┐                     │
+     │  ai-proxy (vision)           │─────────────────────┼─► WhatsApp Cloud API v23
+     │  sarvam-speech (Bulbul/      │                     │
+     │    Saaras)                   │                     │
+     └──────────────────────────────┘                     │
 ```
 
 Local-first: everything the elder needs lives in IndexedDB. Reminders, speech,
@@ -57,8 +59,9 @@ sync target — the UI never waits on the network.
   with one-tap 1mg reorder (no fake checkout — we hand off and stop).
 - History: today / this week, taken-time or Missed per dose, "Took late"
   correction, elder names when there are several.
-- Family & alerts: contacts with WhatsApp numbers; the escalation ladder shown
-  as reality — 1) WhatsApp at 30 min missed, 2) Sarvam voice call at 60 min.
+- Family & members: one people list — elders who take medicines, family members
+  with WhatsApp numbers. The escalation ladder shown as reality: 1) WhatsApp at
+  the grace time, 2) a second warning after 2+ hours if still untaken.
 - Settings: language, phone-for switch, **optional** Backup & restore.
 
 ### Escalation (automatic, the elder does nothing)
