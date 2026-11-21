@@ -71,14 +71,36 @@ function nowMinutes() {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-async function sendWhatsApp(to, text) {
+async function sendWhatsApp(to, text, slotHint) {
   const token = process.env.WHATSAPP_TOKEN;
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!token || !phoneId) return { skipped: "credentials not set" };
-  const r = await request(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+
+  // Business-initiated messages REQUIRE a template unless the recipient has
+  // replied within 24h (customer service window). The test number also only
+  // delivers to recipients verified in the API Setup "To" list (max 5).
+  const templateName = process.env.WHATSAPP_TEMPLATE_NAME || "hello_world";
+  const templateLang = process.env.WHATSAPP_TEMPLATE_LANG || "en_US";
+
+  const message = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "template",
+    template: { name: templateName, language: { code: templateLang } },
+  };
+  // A custom template with body variables: {{1}} medicine, {{2}} date+time.
+  // hello_world has no variables, so components are only sent for custom ones.
+  if (process.env.WHATSAPP_TEMPLATE_NAME) {
+    message.template.components = [
+      { type: "body", parameters: [{ type: "text", text: text }, { type: "text", text: slotHint }] },
+    ];
+  }
+
+  const r = await request(`https://graph.facebook.com/v23.0/${phoneId}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: text } }),
+    body: JSON.stringify(message),
   });
   return { ok: r.status >= 200 && r.status < 300, status: r.status, body: r.text.slice(0, 200) };
 }
@@ -141,7 +163,7 @@ module.exports = async ({ req, res, log, error }) => {
 
           if (familyNumber) {
             const waId = `wa_${med.$id}_${slot}_${date}`.replace(/[^a-zA-Z0-9._-]/g, "_");
-            const wa = await sendWhatsApp(familyNumber, `MedscopeOne: ${med.nickname} (${med.name}) - the ${slot} dose was not taken today. Please check on them.`);
+            const wa = await sendWhatsApp(familyNumber, `MedscopeOne: ${med.nickname} (${med.name}) - the ${slot} dose was not taken today. Please check on them.`, `${date} ${slot}`);
             if (wa.ok) summary.whatsapp++;
             await createRow("alerts", waId, {
               elderId: med.elderId || "",
