@@ -41,7 +41,9 @@ export default function MedicineListScreen({
     const elderId = m.elderId ?? "unknown";
     let g = groups.find((x) => x.elderId === elderId);
     if (!g) {
-      const member = members.find((d) => d.id === elderId);
+      // Member id first; older medicines still point at the elder's deviceKey,
+      // which the migrated member row carries in deviceKey.
+      const member = members.find((d) => d.id === elderId || d.deviceKey === elderId);
       const idx = groups.length + 1;
       const fallback = `${lang === "en" ? "Elder" : lang === "hi" ? "बुज़ुर्ग" : "বয়স্ক"} ${idx}`;
       g = { elderId, name: member?.name || fallback, meds: [] };

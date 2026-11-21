@@ -151,8 +151,8 @@ export async function deleteMedicine(id: string): Promise<void> {
 
 export async function logDose(l: DoseLog): Promise<void> {
   if (!l.elderId) {
-    const s = await getSettings();
-    l.elderId = s.deviceKey;
+    // Prefer the member identity (stable across devices); deviceKey is legacy.
+    l.elderId = (await myMemberId()) ?? (await getSettings()).deviceKey;
   }
   await put("taken", l);
   // decrement stock locally by the dose's units

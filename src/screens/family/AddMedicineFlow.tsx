@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { saveMedicine, listDevices, getSettings, getMyName, pullHousehold, type Medicine } from "../../db";
+import { saveMedicine, listMembers, getSettings, getMyName, myMemberId, pullHousehold, type Medicine } from "../../db";
 import { t, localizeNumber, type Lang } from "../../i18n";
 import { useSpeaker, SpeakerIcon } from "../../speech";
 import { readMedicineImage, type MedicineReading } from "../../lib/prescription";
@@ -31,6 +31,7 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
   const [aiError, setAiError] = useState("");
   // Which elder in the household takes this medicine. A family phone may hold
   // several elders' schedules, so the medicine has to say whose it is.
+  // Options come from the members list — the single people directory.
   const [elders, setElders] = useState<{ id: string; name: string }[]>([]);
   const [elderId, setElderId] = useState("");
   const speak = useSpeaker(lang);
@@ -40,19 +41,24 @@ export default function AddMedicineFlow({ lang, onDone }: { lang: Lang; onDone: 
   useEffect(() => {
     void (async () => {
       await pullHousehold();
-      const [s, devices, myName] = await Promise.all([getSettings(), listDevices(), getMyName()]);
+      const [s, members, myName, myMember] = await Promise.all([getSettings(), listMembers(), getMyName(), myMemberId()]);
       const label = t(lang, "thisPhone");
+      const elderMembers = members.filter((m) => m.role === "elder");
       const opts: { id: string; name: string }[] = [];
-      const me = devices.find((d) => d.id === s.deviceKey);
-      const iAmElder = !me || me.role === "elder";
-      // This phone first when it is the one taking the medicine.
-      if (iAmElder) opts.push({ id: s.deviceKey, name: myName ? `${myName} (${label})` : label });
-      for (const d of devices) {
-        if (d.role !== "elder" || d.id === s.deviceKey) continue;
-        opts.push({ id: d.id, name: d.name || `${t(lang, "elder")} ${opts.length + 1}` });
+      // This phone first when its member is an elder (or unclaimed — e.g. the
+      // elder is setting up on a family-onboarded phone).
+      const myMemberRow = members.find((m) => m.id === myMember);
+      const iAmElder = myMember ? myMemberRow?.role === "elder" : true;
+      if (iAmElder) {
+        const id = myMember && myMemberRow?.role === "elder" ? myMember : s.deviceKey;
+        opts.push({ id, name: myName ? `${myName} (${label})` : label });
+      }
+      for (const m of elderMembers) {
+        if (opts.some((o) => o.id === m.id)) continue;
+        opts.push({ id: m.id, name: m.name || `${t(lang, "elder")} ${opts.length + 1}` });
       }
       setElders(opts);
-      setElderId((prev) => prev || (iAmElder ? s.deviceKey : opts[0]?.id || ""));
+      setElderId((prev) => prev || (iAmElder ? opts[0]?.id || s.deviceKey : opts[0]?.id || ""));
     })();
   }, [lang]);
 
